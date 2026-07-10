@@ -3,7 +3,6 @@ import httpx
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from aiocache import cached  # ক্যাশিং এর জন্য লাইব্রেরি
 
 INFO_API_URL = "https://info.killersharmabot.online/player-info"
 IMAGE_GEN_URL = "https://image.killersharmabot.online/banner-image"
@@ -22,17 +21,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Timeout কমিয়ে দেওয়া হয়েছে যাতে কোনো সার্ভার ডাউন থাকলে আপনার API ঝুলে না থাকে
+# Timeout ৫ সেকেন্ড রাখা হয়েছে যাতে রিকোয়েস্ট ঝুলে না থাকে
 client = httpx.AsyncClient(
     headers={"User-Agent": "Mozilla/5.0"},
-    timeout=5.0, 
+    timeout=5.0,
     follow_redirects=True
 )
 
-# এই ফাংশনটি প্রতিটা UID এর ইমেজ ৫ মিনিটের জন্য মেমোরিতে সেভ রাখবে
-@cached(ttl=300)  # ttl=300 মানে ৩০০ সেকেন্ড বা ৫ মিনিট ক্যাশ থাকবে
-async def fetch_and_generate_banner(uid: str) -> bytes:
-    # ১. প্লেয়ার ইনফো ফেচ করা
+@app.get("/")
+async def home():
+    return {"status": "Vercel Optimized Banner API Running", "endpoint": "/astro?uid=UID"}
+
+@app.get("/astro")
+async def get_banner(uid: str):
+    # ১. প্লেয়ার ইনফো API থেকে ডেটা আনা
     url = f"{INFO_API_URL}?uid={uid}"
     try:
         resp = await client.get(url)
@@ -50,7 +52,7 @@ async def fetch_and_generate_banner(uid: str) -> bytes:
     if not name:
         raise HTTPException(404, "Account not found or invalid response from info API")
 
-    # ২. প্যারামিটার তৈরি করা
+    # ২. নতুন API এর কুয়েরি প্যারামিটার তৈরি
     params = {
         "headPic": basic_info.get("headPic", ""),
         "bannerId": basic_info.get("bannerId", ""),
@@ -63,27 +65,21 @@ async def fetch_and_generate_banner(uid: str) -> bytes:
         "frame": basic_info.get("frame", "") or profile_info.get("frame", "")
     }
 
-    # ৩. ইমেজ জেনারেট করা
+    # ৩. ইমেজ জেনারেটর API থেকে ইমেজ ফেচ করা
     try:
         img_resp = await client.get(IMAGE_GEN_URL, params=params)
         if img_resp.status_code != 200:
             raise HTTPException(502, f"Image Generator API returned {img_resp.status_code}")
-        return img_resp.content  # ইমেজের বাইনারি ডেটা রিটার্ন
     except Exception as e:
         raise HTTPException(502, f"Failed to generate banner image: {str(e)}")
 
+    # ৪. Vercel CDN ক্যাশিং হেডার সেট করা (৫ মিনিটের জন্য ক্যাশ থাকবে)
+    headers = {
+        "Cache-Control": "public, max-age=300, s-maxage=300, stale-while-revalidate=60"
+    }
 
-@app.get("/")
-async def home():
-    return {"status": "Cached Banner API Running", "endpoint": "/astro?uid=UID"}
-
-
-@app.get("/astro")
-async def get_banner(uid: str):
-    # ক্যাশ ফাংশন কল করা হচ্ছে
-    img_content = await fetch_and_generate_banner(uid)
-    return Response(content=img_content, media_type="image/png")
-
+    # ৫. ইমেজ রেসপন্স পাঠানো
+    return Response(content=img_resp.content, media_type="image/png", headers=headers)
 
 if __name__ == "__main__":
     import uvicorn
