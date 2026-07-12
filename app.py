@@ -34,7 +34,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-INFO_API_URL = "https://info.killersharmabot.online/player-info?uid="
+INFO_API_URL = "https://atozinfo.vercel.app/info?uid="
 BASE64_URL = "aHR0cHM6Ly9jZG4uanNkZWxpdnIubmV0L2doL1NoYWhHQ3JlYXRvci9pY29uQG1haW4vUE5H"
 IMAGE_BASE_URL = base64.b64decode(BASE64_URL).decode('utf-8')
 
