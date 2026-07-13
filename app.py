@@ -2,7 +2,6 @@ import io
 import os
 import asyncio
 import httpx
-import base64
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,13 +9,13 @@ from PIL import Image, ImageDraw, ImageFont
 from concurrent.futures import ThreadPoolExecutor
 
 # ================= ADJUSTMENT SETTINGS =================
-AVATAR_ZOOM = 1.26
-AVATAR_SHIFT_Y = 0  
-AVATAR_SHIFT_X = 0  
-BANNER_START_X = 0.25
-BANNER_START_Y = 0.29
-BANNER_END_X = 0.81
-BANNER_END_Y = 0.65
+# আপনার পাঠানো উদাহরণের ব্যানারের ডিজাইন অনুযায়ী এই পজিশনগুলো (X, Y) সামান্য পরিবর্তন করে নিতে পারেন
+AVATAR_POS_X = 50       # ব্যানারের যেখানে অ্যাভাটার বসবে তার X অক্ষ
+AVATAR_POS_Y = 50       # ব্যানারের যেখানে অ্যাভাটার বসবে তার Y অক্ষ
+AVATAR_SIZE = 150       # অ্যাভাটারটির সাইজ (বক্সের সাইজ অনুযায়ী রিলিজ বা বড় করতে পারেন)
+
+LEVEL_POS_X = 850       # ব্যানারের লেভেল টেক্সট বসানোর X অক্ষ
+LEVEL_POS_Y = 320       # ব্যানারের লেভেল টেক্সট বসানোর Y অক্ষ
 
 # ================= Lifespan =================
 @asynccontextmanager
@@ -35,8 +34,12 @@ app.add_middleware(
 )
 
 INFO_API_URL = "https://atozinfo.vercel.app/info?uid="
-BASE64_URL = "aHR0cHM6Ly9jZG4uanNkZWxpdnIubmV0L2doL1NoYWhHQ3JlYXRvci9pY29uQG1haW4vUE5H"
-IMAGE_BASE_URL = base64.b64decode(BASE64_URL).decode('utf-8')
+
+# অ্যাভাটার ইমেজ ডাউনলোডের বেস ইউআরএল (আগেরটাই রাখা হলো)
+AVATAR_BASE_URL = "https://cdn.jsdelivr.net/gh/ShahGCreator/icon@main/PNG"
+
+# আপনার দেওয়া GitHub রিপোজিটরির র (Raw) কন্টেন্ট ইউআরএল যেখান থেকে ব্যানার ডিরেক্ট ডাউনলোড হবে
+BANNER_BASE_URL = "https://raw.githubusercontent.com/AstroCode-GBot/kdhdsdf/main/banner"
 
 FONT_FILE = "arial_unicode_bold.otf"
 FONT_CHEROKEE = "NotoSansCherokee.ttf"
@@ -60,74 +63,64 @@ def load_unicode_font(size, font_file=FONT_FILE):
         pass
     return ImageFont.load_default()
 
-async def fetch_image_bytes(item_id):
-    if not item_id or str(item_id) in ["0", "None", "null"]:
+async def fetch_avatar_bytes(avatar_id):
+    if not avatar_id or str(avatar_id) in ["0", "None", "null"]:
         return None
-    url = f"{IMAGE_BASE_URL}/{item_id}.png"
+    url = f"{AVATAR_BASE_URL}/{avatar_id}.png"
     try:
         resp = await client.get(url)
         if resp.status_code == 200:
             return resp.content
     except Exception as e:
-        print(f"DEBUG: Error fetching image {item_id}: {e}")
+        print(f"DEBUG: Error fetching avatar {avatar_id}: {e}")
     return None
 
-def bytes_to_image(img_bytes):
+async def fetch_banner_bytes(banner_id):
+    if not banner_id or str(banner_id) in ["0", "None", "null"]:
+        return None
+    # GitHub থেকে সরাসরি png ফরম্যাটে ব্যানারটি নিয়ে আসবে
+    url = f"{BANNER_BASE_URL}/{banner_id}.png"
+    try:
+        resp = await client.get(url)
+        if resp.status_code == 200:
+            return resp.content
+    except Exception as e:
+        print(f"DEBUG: Error fetching banner {banner_id}: {e}")
+    return None
+
+def bytes_to_image(img_bytes, default_size=(400, 400)):
     if img_bytes:
         try:
             return Image.open(io.BytesIO(img_bytes)).convert("RGBA")
         except:
             pass
-    return Image.new("RGBA", (400, 400), (200, 200, 200, 255))
+    return Image.new("RGBA", default_size, (200, 200, 200, 255))
     
 # ================= IMAGE PROCESS =================
 def process_banner_image(data, avatar_bytes, banner_bytes):
-    avatar_img = bytes_to_image(avatar_bytes)
-    banner_img = bytes_to_image(banner_bytes)
+    # ব্যানারটিকে ব্যাকগ্রাউন্ড হিসেবে ওপেন করা হচ্ছে
+    banner_img = bytes_to_image(banner_bytes, default_size=(1024, 400))
+    avatar_img = bytes_to_image(avatar_bytes, default_size=(200, 200))
 
     level = str(data.get("AccountLevel", "0"))
     name = data.get("AccountName", "Unknown")
     guild = data.get("GuildName", "")
 
-    TARGET_HEIGHT = 400
-
-    # Avatar Crop
-    zoom_size = int(TARGET_HEIGHT * AVATAR_ZOOM)
-    avatar_img = avatar_img.resize((zoom_size, zoom_size), Image.LANCZOS)
-    left = (zoom_size - TARGET_HEIGHT) // 2 - AVATAR_SHIFT_X
-    top = (zoom_size - TARGET_HEIGHT) // 2 - AVATAR_SHIFT_Y
-    avatar_img = avatar_img.crop((left, top, left + TARGET_HEIGHT, top + TARGET_HEIGHT))
-    av_w, av_h = avatar_img.size
-
-    # Banner Crop Logic
-    b_w, b_h = banner_img.size
-    if b_w > 100 and b_h > 100:
-        banner_img = banner_img.rotate(3, expand=True)
-        bw_rot, bh_rot = banner_img.size
-        crop_left = bw_rot * BANNER_START_X
-        crop_top = bh_rot * BANNER_START_Y
-        crop_right = bw_rot * BANNER_END_X
-        crop_bottom = bh_rot * BANNER_END_Y
-        banner_img = banner_img.crop((crop_left, crop_top, crop_right, crop_bottom))
-
-    # Resize Banner
-    b_w, b_h = banner_img.size
-    aspect = (b_w / b_h) if b_h > 0 else 2.0
-    new_banner_w = int(TARGET_HEIGHT * aspect * 2)
-    banner_img = banner_img.resize((new_banner_w, TARGET_HEIGHT), Image.LANCZOS)
-
-    final_w = av_w + new_banner_w
-    combined = Image.new("RGBA", (final_w, TARGET_HEIGHT), (0, 0, 0, 255))
+    # নতুন নিয়মে ব্যানারটাই হবে মেইন ক্যানভাস/ব্যাকগ্রাউন্ড
+    combined = banner_img.copy()
     
-    combined.paste(avatar_img, (0, 0))
-    combined.paste(banner_img, (av_w, 0))
+    # অ্যাভাটার রিসাইজ এবং ব্যানারের নির্ধারিত স্থানে পেস্ট (ওভারল্যাপ করা)
+    avatar_img = avatar_img.resize((AVATAR_SIZE, AVATAR_SIZE), Image.LANCZOS)
+    combined.paste(avatar_img, (AVATAR_POS_X, AVATAR_POS_Y), avatar_img)
 
     draw = ImageDraw.Draw(combined)
-    font_large = load_unicode_font(125)
-    font_large_cherokee = load_unicode_font(125, FONT_CHEROKEE)
-    font_small = load_unicode_font(95)
-    font_small_cherokee = load_unicode_font(95, FONT_CHEROKEE)
-    font_level = load_unicode_font(50)
+    
+    # ফন্ট সাইজগুলো ব্যানারের রেজোলিউশন অনুযায়ী অ্যাডজাস্ট করতে পারেন
+    font_large = load_unicode_font(50)
+    font_large_cherokee = load_unicode_font(50, FONT_CHEROKEE)
+    font_small = load_unicode_font(35)
+    font_small_cherokee = load_unicode_font(35, FONT_CHEROKEE)
+    font_level = load_unicode_font(30)
 
     def is_cherokee(c):
         return 0x13A0 <= ord(c) <= 0x13FF or 0xAB70 <= ord(c) <= 0xABBF
@@ -142,17 +135,15 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
             draw.text((cx, y), ch, font=f, fill="white")
             cx += f.getlength(ch)
 
-    # Draw Name and Guild
-    draw_text(av_w + 65, 40, name, font_large, font_large_cherokee, 4)
+    # নাম এবং গিল্ড এর টেক্সট লজিক (নামের পজিশন অ্যাভাটার এর ডান পাশে রাখার জন্য)
+    text_start_x = AVATAR_POS_X + AVATAR_SIZE + 30
+    draw_text(text_start_x, AVATAR_POS_Y + 10, name, font_large, font_large_cherokee, 3)
     if guild:
-        draw_text(av_w + 65, 220, guild, font_small, font_small_cherokee, 3)
+        draw_text(text_start_x, AVATAR_POS_Y + 75, guild, font_small, font_small_cherokee, 2)
 
-    # Level Display
-    lvl_text = f"Lvl.{level}"
-    bbox = draw.textbbox((0, 0), lvl_text, font=font_level)
-    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.rectangle([final_w - w - 60, TARGET_HEIGHT - h - 50, final_w, TARGET_HEIGHT], fill="black")
-    draw.text((final_w - w - 30, TARGET_HEIGHT - h - 40), lvl_text, font=font_level, fill="white")
+    # লেভেল ডিসপ্লে (সরাসরি ব্যানারের লেভেল আইকন/বক্সের ওপরে বসবে)
+    lvl_text = f"{level}" # শুধু লেভেল নাম্বার দিতে চাইলে `level`, অথবা `Lvl.{level}` লিখতে পারেন
+    draw.text((LEVEL_POS_X, LEVEL_POS_Y), lvl_text, font=font_level, fill="white", stroke_width=2, stroke_fill="black")
 
     img_io = io.BytesIO()
     combined.save(img_io, "PNG")
@@ -173,8 +164,6 @@ async def get_banner(uid: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching data: {str(e)}")
 
-    # ================= MAPPING NEW API RESPONSE =================
-    # আপনার নতুন রেসপন্স অনুযায়ী ম্যাপিং:
     basic_info = data.get("basicInfo", {})
     clan_info = data.get("clanBasicInfo", {})
     
@@ -190,9 +179,9 @@ async def get_banner(uid: str):
 
     print(f"DEBUG: Processing Player -> Name: {account_name}, AvatarID: {avatar_id}, BannerID: {banner_id}")
 
-    # ইমেজ ফেচিং
-    avatar_task = fetch_image_bytes(avatar_id)
-    banner_task = fetch_image_bytes(banner_id)
+    # আলাদা আলাদা সোর্স থেকে ইমেজ নিয়ে আসা হচ্ছে
+    avatar_task = fetch_avatar_bytes(avatar_id)
+    banner_task = fetch_banner_bytes(banner_id)
     avatar, banner = await asyncio.gather(avatar_task, banner_task)
     
     banner_data = {
@@ -212,6 +201,5 @@ async def get_banner(uid: str):
 
 if __name__ == "__main__":
     import uvicorn
-    # Render passes the port dynamically via the PORT environment variable
     port = int(os.environ.get("PORT", 5000))
     uvicorn.run(app, host="0.0.0.0", port=port)
