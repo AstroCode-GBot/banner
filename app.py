@@ -6,10 +6,11 @@ import base64
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFont
 from concurrent.futures import ThreadPoolExecutor
 
 # ================= ADJUSTMENT SETTINGS =================
+# ফাইনাল ইমেজ সাইজ এখন ফিক্সড ২০৪৮ x ৫১২
 TARGET_WIDTH = 2048
 TARGET_HEIGHT = 512
 
@@ -79,51 +80,42 @@ async def fetch_banner_bytes(banner_id):
         print(f"DEBUG: Error fetching banner {banner_id}: {e}")
     return None
 
-def bytes_to_image(img_bytes, transparent=False, default_w=512, default_h=512):
+def bytes_to_image(img_bytes, default_w=512, default_h=512):
     if img_bytes:
         try:
             return Image.open(io.BytesIO(img_bytes)).convert("RGBA")
         except:
             pass
-    if transparent:
-        return Image.new("RGBA", (default_w, default_h), (0, 0, 0, 0))
     return Image.new("RGBA", (default_w, default_h), (40, 40, 40, 255))
 
 # ================= IMAGE PROCESS =================
 def process_banner_image(data, avatar_bytes, banner_bytes):
-    avatar_img = bytes_to_image(avatar_bytes, transparent=True, default_w=TARGET_HEIGHT, default_h=TARGET_HEIGHT)
-    banner_img = bytes_to_image(banner_bytes, transparent=False, default_w=TARGET_WIDTH, default_h=TARGET_HEIGHT)
+    # অবতার এবং ব্যানার ইমেজ লোড করা
+    avatar_img = bytes_to_image(avatar_bytes, default_w=TARGET_HEIGHT, default_h=TARGET_HEIGHT)
+    banner_img = bytes_to_image(banner_bytes, default_w=TARGET_WIDTH, default_h=TARGET_HEIGHT)
     
     level = str(data.get("AccountLevel", "0"))
     name = data.get("AccountName", "Unknown")
     guild = data.get("GuildName", "")
 
-    # ১. অবতার ফিক্স (রেশিও ঠিক রেখে রিসাইজ, যাতে পেছনের ব্যাকগ্রাউন্ড ছিটকে না বের হয়)
-    avatar_img.thumbnail((TARGET_HEIGHT, TARGET_HEIGHT), Image.LANCZOS)
-    av_w, av_h = avatar_img.size
+    # ১. অবতার সাইজ ফিক্সিং (ব্যানারের হাইট অনুযায়ী স্কয়ার সাইজ করা হলো)
+    avatar_img = avatar_img.resize((TARGET_HEIGHT, TARGET_HEIGHT), Image.LANCZOS)
+    av_w, _ = avatar_img.size
 
-    # ২. ব্যানারের জুম ফিক্স (কোনো জুম বা ক্রপ ছাড়া অরিজিনাল রেশিও বজায় রেখে ২০৪৮x৫১২ এর ভেতর ফিট করা)
-    banner_canvas = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), (0, 0, 0, 255))
-    banner_img.thumbnail((TARGET_WIDTH, TARGET_HEIGHT), Image.LANCZOS)
-    bn_w, bn_h = banner_img.size
-    # ব্যানারটিকে ক্যানভাসের একদম মাঝখানে বসানো (Center Inside)
-    offset_x = (TARGET_WIDTH - bn_w) // 2
-    offset_y = (TARGET_HEIGHT - bn_h) // 2
-    banner_canvas.paste(banner_img, (offset_x, offset_y))
+    # ২. ব্যানার সাইজ ফিক্সিং (কোনো ক্রপ বা রোটেশন ছাড়া ফুল ২০৪৮ x ৫১২ সাইজে রিসাইজ)
+    banner_img = banner_img.resize((TARGET_WIDTH, TARGET_HEIGHT), Image.LANCZOS)
 
-    # ৩. ফাইনাল আউটপুট ক্যানভাস তৈরি
+    # ৩. কম্বাইন্ড ক্যানভাস তৈরি (২০৪৮ x ৫১২ পিক্সেল)
     combined = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), (0, 0, 0, 255))
     
-    # প্রথমে ফুল ব্যানার পেস্ট
-    combined.paste(banner_canvas, (0, 0))
-    
-    # এবার অবতার পেস্ট (অরিজিনাল মাস্ক দিয়ে, যাতে পিঙ্ক বা এক্সট্রা বিজি রিমুভ হয়ে যায়)
-    # অবতারের পজিশন একদম বামে এবং হাইটের সাথে সামঞ্জস্য রেখে ওয়াই-অফসেট সেট করা
-    av_offset_y = (TARGET_HEIGHT - av_h) // 2
-    combined.paste(avatar_img, (0, av_offset_y), avatar_img)
+    # প্রথমে পুরো ব্যাকগ্রাউন্ডে ব্যানার পেস্ট করা হলো
+    combined.paste(banner_img, (0, 0))
+    # ব্যানারের ওপর বাম কোণায় অবতারটি বসানো হলো
+    combined.paste(avatar_img, (0, 0), avatar_img)
 
     draw = ImageDraw.Draw(combined)
     
+    # ফন্ট সাইজ পিক্সেল রেশিও অনুযায়ী অ্যাডজাস্ট করা হয়েছে
     font_large = load_unicode_font(140)
     font_large_cherokee = load_unicode_font(140, FONT_CHEROKEE)
     font_small = load_unicode_font(100)
@@ -143,16 +135,17 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
             draw.text((cx, y), ch, font=f, fill="white")
             cx += f.getlength(ch)
 
-    # টেক্সট এখন অবতারের আসল উইডথ (av_w) হিসাব করে ডানে বসবে
+    # লেখাগুলোর পজিশন অবতারের ডানে সেট করা হয়েছে
     draw_text(av_w + 80, 50, name, font_large, font_large_cherokee, 5)
     if guild:
         draw_text(av_w + 80, 260, guild, font_small, font_small_cherokee, 4)
 
-    # লেভেল ডিসপ্লে বক্স ও টেক্সট
+    # লেভেল ডিসপ্লে (ডানদিকের নিচে ২য় ছবির মতো পজিশন)
     lvl_text = f"Lvl. {level}"
     bbox = draw.textbbox((0, 0), lvl_text, font=font_level)
     w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
     
+    # টেক্সটের চারপাশে ব্যাকগ্রাউন্ড বক্স
     draw.rectangle([TARGET_WIDTH - w - 80, TARGET_HEIGHT - h - 60, TARGET_WIDTH - 30, TARGET_HEIGHT - 20], fill="black")
     draw.text((TARGET_WIDTH - w - 55, TARGET_HEIGHT - h - 50), lvl_text, font=font_level, fill="white")
     
