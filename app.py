@@ -91,8 +91,8 @@ def load_banner_image(banner_bytes):
         except:
             pass
     
-    # ব্যানার না পাওয়া গেলে বা এরর হলে local directory থেকে 'banner_no.png' রিড করবে
-    local_default = os.path.join(os.path.dirname(__file__), "banner_no.png")
+    # ব্যানার না পাওয়া গেলে বা এরর হলে local directory থেকে '901054015.png' রিড করবে
+    local_default = os.path.join(os.path.dirname(__file__), "901054015.png")
     if os.path.exists(local_default):
         try:
             return Image.open(local_default).convert("RGBA")
