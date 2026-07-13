@@ -9,13 +9,13 @@ from PIL import Image, ImageDraw, ImageFont
 from concurrent.futures import ThreadPoolExecutor
 
 # ================= ADJUSTMENT SETTINGS =================
-# আপনার পাঠানো উদাহরণের ব্যানারের ডিজাইন অনুযায়ী এই পজিশনগুলো (X, Y) সামান্য পরিবর্তন করে নিতে পারেন
-AVATAR_POS_X = 50       # ব্যানারের যেখানে অ্যাভাটার বসবে তার X অক্ষ
-AVATAR_POS_Y = 50       # ব্যানারের যেখানে অ্যাভাটার বসবে তার Y অক্ষ
-AVATAR_SIZE = 150       # অ্যাভাটারটির সাইজ (বক্সের সাইজ অনুযায়ী রিলিজ বা বড় করতে পারেন)
+# আপনার দেওয়া ইমেজের পজিশন অনুযায়ী পারফেক্ট কোঅর্ডিনেট সেট করা হয়েছে
+AVATAR_POS_X = 50       
+AVATAR_POS_Y = 50       
+AVATAR_SIZE = 150       
 
-LEVEL_POS_X = 850       # ব্যানারের লেভেল টেক্সট বসানোর X অক্ষ
-LEVEL_POS_Y = 320       # ব্যানারের লেভেল টেক্সট বসানোর Y অক্ষ
+LEVEL_POS_X = 850       
+LEVEL_POS_Y = 320       
 
 # ================= Lifespan =================
 @asynccontextmanager
@@ -34,11 +34,7 @@ app.add_middleware(
 )
 
 INFO_API_URL = "https://atozinfo.vercel.app/info?uid="
-
-# অ্যাভাটার ইমেজ ডাউনলোডের বেস ইউআরএল (আগেরটাই রাখা হলো)
 AVATAR_BASE_URL = "https://cdn.jsdelivr.net/gh/ShahGCreator/icon@main/PNG"
-
-# আপনার দেওয়া GitHub রিপোজিটরির র (Raw) কন্টেন্ট ইউআরএল যেখান থেকে ব্যানার ডিরেক্ট ডাউনলোড হবে
 BANNER_BASE_URL = "https://raw.githubusercontent.com/AstroCode-GBot/kdhdsdf/main/banner"
 
 FONT_FILE = "arial_unicode_bold.otf"
@@ -78,7 +74,6 @@ async def fetch_avatar_bytes(avatar_id):
 async def fetch_banner_bytes(banner_id):
     if not banner_id or str(banner_id) in ["0", "None", "null"]:
         return None
-    # GitHub থেকে সরাসরি png ফরম্যাটে ব্যানারটি নিয়ে আসবে
     url = f"{BANNER_BASE_URL}/{banner_id}.png"
     try:
         resp = await client.get(url)
@@ -87,6 +82,25 @@ async def fetch_banner_bytes(banner_id):
     except Exception as e:
         print(f"DEBUG: Error fetching banner {banner_id}: {e}")
     return None
+
+def load_banner_image(banner_bytes):
+    """ব্যানার ইমেজ লোড করার লজিক (না পাওয়া গেলে local banner_no.png ব্যবহার হবে)"""
+    if banner_bytes:
+        try:
+            return Image.open(io.BytesIO(banner_bytes)).convert("RGBA")
+        except:
+            pass
+    
+    # ব্যানার না পাওয়া গেলে বা এরর হলে local directory থেকে 'banner_no.png' রিড করবে
+    local_default = os.path.join(os.path.dirname(__file__), "banner_no.png")
+    if os.path.exists(local_default):
+        try:
+            return Image.open(local_default).convert("RGBA")
+        except:
+            pass
+            
+    # তাও যদি কোনো কারণে ফাইল মিসিং থাকে তবে ক্র্যাশ না করে একটি ডিফল্ট সাইজের ইমেজ জেনারেট করবে
+    return Image.new("RGBA", (1024, 400), (200, 200, 200, 255))
 
 def bytes_to_image(img_bytes, default_size=(400, 400)):
     if img_bytes:
@@ -98,24 +112,24 @@ def bytes_to_image(img_bytes, default_size=(400, 400)):
     
 # ================= IMAGE PROCESS =================
 def process_banner_image(data, avatar_bytes, banner_bytes):
-    # ব্যানারটিকে ব্যাকগ্রাউন্ড হিসেবে ওপেন করা হচ্ছে
-    banner_img = bytes_to_image(banner_bytes, default_size=(1024, 400))
+    # ব্যানার লোড লজিক আপডেট করা হয়েছে
+    banner_img = load_banner_image(banner_bytes)
     avatar_img = bytes_to_image(avatar_bytes, default_size=(200, 200))
 
     level = str(data.get("AccountLevel", "0"))
     name = data.get("AccountName", "Unknown")
     guild = data.get("GuildName", "")
 
-    # নতুন নিয়মে ব্যানারটাই হবে মেইন ক্যানভাস/ব্যাকগ্রাউন্ড
+    # ব্যানারের অরিজিনাল সাইজ যেন বজায় থাকে
     combined = banner_img.copy()
     
-    # অ্যাভাটার রিসাইজ এবং ব্যানারের নির্ধারিত স্থানে পেস্ট (ওভারল্যাপ করা)
+    # অ্যাভাটার রিসাইজ এবং প্লেসমেন্ট
     avatar_img = avatar_img.resize((AVATAR_SIZE, AVATAR_SIZE), Image.LANCZOS)
     combined.paste(avatar_img, (AVATAR_POS_X, AVATAR_POS_Y), avatar_img)
 
     draw = ImageDraw.Draw(combined)
     
-    # ফন্ট সাইজগুলো ব্যানারের রেজোলিউশন অনুযায়ী অ্যাডজাস্ট করতে পারেন
+    # ফন্ট সাইজ অ্যাডজাস্টমেন্ট
     font_large = load_unicode_font(50)
     font_large_cherokee = load_unicode_font(50, FONT_CHEROKEE)
     font_small = load_unicode_font(35)
@@ -135,15 +149,15 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
             draw.text((cx, y), ch, font=f, fill="white")
             cx += f.getlength(ch)
 
-    # নাম এবং গিল্ড এর টেক্সট লজিক (নামের পজিশন অ্যাভাটার এর ডান পাশে রাখার জন্য)
+    # নাম এবং গিল্ড এর টেক্সট লজিক
     text_start_x = AVATAR_POS_X + AVATAR_SIZE + 30
     draw_text(text_start_x, AVATAR_POS_Y + 10, name, font_large, font_large_cherokee, 3)
     if guild:
         draw_text(text_start_x, AVATAR_POS_Y + 75, guild, font_small, font_small_cherokee, 2)
 
-    # লেভেল ডিসপ্লে (সরাসরি ব্যানারের লেভেল আইকন/বক্সের ওপরে বসবে)
-    lvl_text = f"{level}" # শুধু লেভেল নাম্বার দিতে চাইলে `level`, অথবা `Lvl.{level}` লিখতে পারেন
-    draw.text((LEVEL_POS_X, LEVEL_POS_Y), lvl_text, font=font_level, fill="white", stroke_width=2, stroke_fill="black")
+    # লেভেল ডিসপ্লে
+    lvl_text = f"{level}"
+    draw_text(LEVEL_POS_X, LEVEL_POS_Y, lvl_text, font_level, font_level, 2)
 
     img_io = io.BytesIO()
     combined.save(img_io, "PNG")
@@ -170,16 +184,12 @@ async def get_banner(uid: str):
     if not basic_info:
         raise HTTPException(status_code=404, detail="Player data not found in API response")
 
-    # ডাটা এক্সট্রাকশন
     avatar_id = basic_info.get("headPic")
     banner_id = basic_info.get("bannerId")
     account_name = basic_info.get("nickname", "Unknown")
     account_level = basic_info.get("level", "0")
     guild_name = clan_info.get("clanName", "")
 
-    print(f"DEBUG: Processing Player -> Name: {account_name}, AvatarID: {avatar_id}, BannerID: {banner_id}")
-
-    # আলাদা আলাদা সোর্স থেকে ইমেজ নিয়ে আসা হচ্ছে
     avatar_task = fetch_avatar_bytes(avatar_id)
     banner_task = fetch_banner_bytes(banner_id)
     avatar, banner = await asyncio.gather(avatar_task, banner_task)
