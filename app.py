@@ -85,14 +85,12 @@ def bytes_to_image(img_bytes, transparent=False, default_w=512, default_h=512):
             return Image.open(io.BytesIO(img_bytes)).convert("RGBA")
         except:
             pass
-    # অবতারের জন্য সম্পূর্ণ ট্রান্সপারেন্ট ব্যাকগ্রাউন্ড, ব্যানারের জন্য ডার্ক ডিফল্ট
     if transparent:
         return Image.new("RGBA", (default_w, default_h), (0, 0, 0, 0))
     return Image.new("RGBA", (default_w, default_h), (40, 40, 40, 255))
 
 # ================= IMAGE PROCESS =================
 def process_banner_image(data, avatar_bytes, banner_bytes):
-    # অবতার ট্রান্সপারেন্ট মোডে লোড হবে, কোনো সলিড ব্যাকগ্রাউন্ড থাকবে না
     avatar_img = bytes_to_image(avatar_bytes, transparent=True, default_w=TARGET_HEIGHT, default_h=TARGET_HEIGHT)
     banner_img = bytes_to_image(banner_bytes, transparent=False, default_w=TARGET_WIDTH, default_h=TARGET_HEIGHT)
     
@@ -100,19 +98,29 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
     name = data.get("AccountName", "Unknown")
     guild = data.get("GuildName", "")
 
-    # ১. অবতার রিসাইজ (স্কয়ার সাইজ এবং ট্রান্সপারেন্সি বজায় রাখা)
-    avatar_img = avatar_img.resize((TARGET_HEIGHT, TARGET_HEIGHT), Image.LANCZOS)
+    # ১. অবতার ফিক্স (রেশিও ঠিক রেখে রিসাইজ, যাতে পেছনের ব্যাকগ্রাউন্ড ছিটকে না বের হয়)
+    avatar_img.thumbnail((TARGET_HEIGHT, TARGET_HEIGHT), Image.LANCZOS)
+    av_w, av_h = avatar_img.size
 
-    # ২. ব্যানারের স্ট্রেচিং ফিক্স (ImageOps.fit দিয়ে রেশিও ঠিক রেখে ২০৪৮x৫১২ তে ক্রপ ও ফিল করা)
-    banner_img = ImageOps.fit(banner_img, (TARGET_WIDTH, TARGET_HEIGHT), Image.LANCZOS)
+    # ২. ব্যানারের জুম ফিক্স (কোনো জুম বা ক্রপ ছাড়া অরিজিনাল রেশিও বজায় রেখে ২০৪৮x৫১২ এর ভেতর ফিট করা)
+    banner_canvas = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), (0, 0, 0, 255))
+    banner_img.thumbnail((TARGET_WIDTH, TARGET_HEIGHT), Image.LANCZOS)
+    bn_w, bn_h = banner_img.size
+    # ব্যানারটিকে ক্যানভাসের একদম মাঝখানে বসানো (Center Inside)
+    offset_x = (TARGET_WIDTH - bn_w) // 2
+    offset_y = (TARGET_HEIGHT - bn_h) // 2
+    banner_canvas.paste(banner_img, (offset_x, offset_y))
 
-    # ৩. ফাইনাল ক্যানভাস তৈরি
+    # ৩. ফাইনাল আউটপুট ক্যানভাস তৈরি
     combined = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), (0, 0, 0, 255))
     
-    # প্রথমে ব্যানার পেস্ট করা হলো
-    combined.paste(banner_img, (0, 0))
-    # এবার অবতার পেস্ট করা হলো (৩য় প্যারামিটারে অরিজিনাল আলফা মাস্ক ব্যবহার করায় পেছনের বিজি আসবে না)
-    combined.paste(avatar_img, (0, 0), avatar_img)
+    # প্রথমে ফুল ব্যানার পেস্ট
+    combined.paste(banner_canvas, (0, 0))
+    
+    # এবার অবতার পেস্ট (অরিজিনাল মাস্ক দিয়ে, যাতে পিঙ্ক বা এক্সট্রা বিজি রিমুভ হয়ে যায়)
+    # অবতারের পজিশন একদম বামে এবং হাইটের সাথে সামঞ্জস্য রেখে ওয়াই-অফসেট সেট করা
+    av_offset_y = (TARGET_HEIGHT - av_h) // 2
+    combined.paste(avatar_img, (0, av_offset_y), avatar_img)
 
     draw = ImageDraw.Draw(combined)
     
@@ -135,10 +143,10 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
             draw.text((cx, y), ch, font=f, fill="white")
             cx += f.getlength(ch)
 
-    # টেক্সট পজিশন
-    draw_text(TARGET_HEIGHT + 80, 50, name, font_large, font_large_cherokee, 5)
+    # টেক্সট এখন অবতারের আসল উইডথ (av_w) হিসাব করে ডানে বসবে
+    draw_text(av_w + 80, 50, name, font_large, font_large_cherokee, 5)
     if guild:
-        draw_text(TARGET_HEIGHT + 80, 260, guild, font_small, font_small_cherokee, 4)
+        draw_text(av_w + 80, 260, guild, font_small, font_small_cherokee, 4)
 
     # লেভেল ডিসপ্লে বক্স ও টেক্সট
     lvl_text = f"Lvl. {level}"
