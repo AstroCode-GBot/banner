@@ -2,37 +2,53 @@ import io
 import os
 import asyncio
 import httpx
+import base64
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, ImageDraw, ImageFont
 from concurrent.futures import ThreadPoolExecutor
 
-# ================= PERFECT ADJUSTMENT SETTINGS =================
-# 1. Avatar Position & Size: বাম পাশের গ্রাফিক্স বক্সটি পুরোপুরি ঢেকে দেওয়ার জন্য বড় করা হলো
-AVATAR_POS_X = 15        # বাম থেকে দূরত্ব
-AVATAR_POS_Y = 15        # উপর থেকে দূরত্ব
-AVATAR_SIZE = 240        # সাইজ অনেক বাড়ানো হলো যাতে পেছনের ব্যাকগ্রাউন্ড ঢাকা পড়ে
+# ================= CONFIGURATION SECTION =================
+# Adjust these values to align perfectly with your GitHub template PNGs
+# All measurements are in pixels
 
-# 2. Text Position (বড় সাদা বক্স): নাম এবং গিল্ডের জন্য
-NAME_POS_X = 280         # এভাটার বড় হওয়ায় নাম একটু ডানে সরানো হলো
-NAME_POS_Y = 50          # নামের উচ্চতা
-GUILD_POS_Y = 110        # গিল্ডের উচ্চতা
+# GitHub Repository Settings
+GITHUB_BANNER_BASE = "https://raw.githubusercontent.com/AstroCode-GBot/kdhdsdf/main/banner/"
+DEFAULT_BANNER_FILENAME = "901054015.png"
 
-# 3. Level Position: 'Lvl.' এর ঠিক পাশে বড় করে বসবে
-LEVEL_POS_X = 945        # ডানে নিচে পজিশন
-LEVEL_POS_Y = 305        # উচ্চতা অ্যাডজাস্ট করা হলো
-# ===============================================================
+# Avatar Positioning (Player avatar over template placeholder)
+TEMPLATE_AVATAR_X = 15
+TEMPLATE_AVATAR_Y = 15
+TEMPLATE_AVATAR_SIZE = 370  # Width and Height (Square)
 
-# নিচের Font Size গুলোও আপডেট করতে হবে (process_banner_image ফাংশনের ভেতরে)
-# process_banner_image ফাংশনের ভেতরে নিচের লাইনগুলো পরিবর্তন করুন:
+# Level Positioning (Covering old level)
+LEVEL_X = 840
+LEVEL_Y = 320
+LEVEL_FONT_SIZE = 55
+LEVEL_TEXT_COLOR = "white"
+# Set a background color if you need to "wipe" the area before drawing level
+# Use None to just draw text directly
+LEVEL_MASK_COLOR = None 
 
-    # ফন্ট সাইজ বড় করা হলো যাতে নাম এবং লেভেল ফুটে ওঠে
-    font_large = load_unicode_font(55)           # নামের সাইজ (আগে ছিল ৩২)
-    font_large_cherokee = load_unicode_font(55, FONT_CHEROKEE)
-    font_small = load_unicode_font(30)           # গিল্ডের সাইজ (আগে ছিল ২৪)
-    font_small_cherokee = load_unicode_font(30, FONT_CHEROKEE)
-    font_level = load_unicode_font(65)           # লেভেলের সাইজ (আগে ছিল ৪০)
+# Name & Guild Positioning (Relative to template)
+NAME_X = 420
+NAME_Y = 40
+NAME_FONT_SIZE = 125
+
+GUILD_X = 420
+GUILD_Y = 220
+GUILD_FONT_SIZE = 95
+
+# Canvas Settings
+TARGET_HEIGHT = 400 # Base height for scaling logic
+
+# ================= ADJUSTMENT SETTINGS (LEGACY COMPATIBILITY) =================
+AVATAR_ZOOM = 1.0  # Kept for logic, but controlled by TEMPLATE_AVATAR_SIZE now
+AVATAR_SHIFT_Y = 0
+AVATAR_SHIFT_X = 0
+
+# ================= Lifespan =================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
@@ -49,9 +65,8 @@ app.add_middleware(
 )
 
 INFO_API_URL = "https://atozinfo.vercel.app/info?uid="
-AVATAR_BASE_URL = "https://cdn.jsdelivr.net/gh/ShahGCreator/icon@main/PNG"
-BANNER_BASE_URL = "https://raw.githubusercontent.com/AstroCode-GBot/kdhdsdf/main/banner"
-
+BASE64_URL = "aHR0cHM6Ly9jZG4uanNkZWxpdnIubmV0L2doL1NoYWhHQ3JlYXRvci9pY29uQG1haW4vUE5H"
+IMAGE_BASE_URL = base64.b64decode(BASE64_URL).decode('utf-8')
 FONT_FILE = "arial_unicode_bold.otf"
 FONT_CHEROKEE = "NotoSansCherokee.ttf"
 
@@ -74,79 +89,82 @@ def load_unicode_font(size, font_file=FONT_FILE):
         pass
     return ImageFont.load_default()
 
-async def fetch_avatar_bytes(avatar_id):
-    if not avatar_id or str(avatar_id) in ["0", "None", "null"]:
-        return None
-    url = f"{AVATAR_BASE_URL}/{avatar_id}.png"
+async def fetch_image_bytes(item_id, is_banner=False):
+    """
+    Fetches image bytes. 
+    If is_banner is True, it pulls from GitHub.
+    If it fails, it tries to pull the default banner.
+    """
+    if not item_id or str(item_id) in ["0", "None", "null"]:
+        if is_banner:
+            item_id = DEFAULT_BANNER_FILENAME.replace(".png", "")
+        else:
+            return None
+
+    if is_banner:
+        url = f"{GITHUB_BANNER_BASE}{item_id}.png"
+    else:
+        url = f"{IMAGE_BASE_URL}/{item_id}.png"
+
     try:
         resp = await client.get(url)
         if resp.status_code == 200:
             return resp.content
-    except Exception as e:
-        print(f"DEBUG: Error fetching avatar {avatar_id}: {e}")
-    return None
-
-async def fetch_banner_bytes(banner_id):
-    if not banner_id or str(banner_id) in ["0", "None", "null"]:
-        return None
-    url = f"{BANNER_BASE_URL}/{banner_id}.png"
-    try:
-        resp = await client.get(url)
-        if resp.status_code == 200:
-            return resp.content
-    except Exception as e:
-        print(f"DEBUG: Error fetching banner {banner_id}: {e}")
-    return None
-
-def load_banner_image(banner_bytes):
-    if banner_bytes:
-        try:
-            return Image.open(io.BytesIO(banner_bytes)).convert("RGBA")
-        except:
-            pass
-    
-    local_default = os.path.join(os.path.dirname(__file__), "901054015.png")
-    if os.path.exists(local_default):
-        try:
-            return Image.open(local_default).convert("RGBA")
-        except:
-            pass
+        
+        # Fallback for banner only
+        if is_banner and resp.status_code != 200:
+            print(f"DEBUG: Banner {item_id} not found, loading default.")
+            fallback_resp = await client.get(f"{GITHUB_BANNER_BASE}{DEFAULT_BANNER_FILENAME}")
+            return fallback_resp.content if fallback_resp.status_code == 200 else None
             
-    return Image.new("RGBA", (1024, 400), (30, 30, 30, 255))
+    except Exception as e:
+        print(f"DEBUG: Error fetching image {item_id}: {e}")
+        if is_banner: # Last resort fallback
+             try:
+                fallback_resp = await client.get(f"{GITHUB_BANNER_BASE}{DEFAULT_BANNER_FILENAME}")
+                return fallback_resp.content
+             except: return None
+    return None
 
-def bytes_to_image(img_bytes, default_size=(400, 400)):
+def bytes_to_image(img_bytes):
     if img_bytes:
         try:
             return Image.open(io.BytesIO(img_bytes)).convert("RGBA")
         except:
             pass
-    return Image.new("RGBA", default_size, (200, 200, 200, 255))
-    
+    # Return transparent placeholder if error
+    return Image.new("RGBA", (400, 400), (0, 0, 0, 0))
+
 # ================= IMAGE PROCESS =================
 def process_banner_image(data, avatar_bytes, banner_bytes):
-    banner_img = load_banner_image(banner_bytes)
-    avatar_img = bytes_to_image(avatar_bytes, default_size=(200, 200))
-
+    # Load Template (from GitHub) and Player Avatar
+    template_img = bytes_to_image(banner_bytes)
+    avatar_img = bytes_to_image(avatar_bytes)
+    
     level = str(data.get("AccountLevel", "0"))
     name = data.get("AccountName", "Unknown")
     guild = data.get("GuildName", "")
 
-    # Main canvas (No crop)
-    combined = banner_img.copy()
+    # 1. AVATAR REPLACEMENT LOGIC
+    # Resize player avatar to match template placeholder
+    avatar_img = avatar_img.resize((TEMPLATE_AVATAR_SIZE, TEMPLATE_AVATAR_SIZE), Image.LANCZOS)
     
-    # Avatar layer overlay (Purono avatar dharer box dhakbe)
-    avatar_img = avatar_img.resize((AVATAR_SIZE, AVATAR_SIZE), Image.LANCZOS)
-    combined.paste(avatar_img, (AVATAR_POS_X, AVATAR_POS_Y), avatar_img)
+    # Create final canvas based on template size
+    combined = template_img.copy()
+    
+    # Paste Avatar exactly over the template placeholder (preserving alpha)
+    combined.paste(avatar_img, (TEMPLATE_AVATAR_X, TEMPLATE_AVATAR_Y), avatar_img)
 
     draw = ImageDraw.Draw(combined)
     
-    # Perfect font sizes based on your design
-    font_large = load_unicode_font(32)
-    font_large_cherokee = load_unicode_font(32, FONT_CHEROKEE)
-    font_small = load_unicode_font(24)
-    font_small_cherokee = load_unicode_font(24, FONT_CHEROKEE)
-    font_level = load_unicode_font(40)  # Lvl. boro lekhata match korte
+    # Load Fonts
+    font_large = load_unicode_font(NAME_FONT_SIZE)
+    font_large_cherokee = load_unicode_font(NAME_FONT_SIZE, FONT_CHEROKEE)
+    font_small = load_unicode_font(GUILD_FONT_SIZE)
+    font_small_cherokee = load_unicode_font(GUILD_FONT_SIZE, FONT_CHEROKEE)
+    font_level = load_unicode_font(LEVEL_FONT_SIZE)
 
+    # 2. TEXT RENDERING ENGINE (UNTOUCHED)
     def is_cherokee(c):
         return 0x13A0 <= ord(c) <= 0x13FF or 0xAB70 <= ord(c) <= 0xABBF
 
@@ -154,23 +172,40 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
         cx = x
         for ch in text:
             f = f_alt if is_cherokee(ch) else f_main
+            # Stroke logic
             for dx in range(-stroke, stroke + 1):
                 for dy in range(-stroke, stroke + 1):
+                    if dx == 0 and dy == 0: continue
                     draw.text((cx + dx, y + dy), ch, font=f, fill="black")
+            # Main text
             draw.text((cx, y), ch, font=f, fill="white")
             cx += f.getlength(ch)
 
-    # Name ebong Guild text center red mark box e draw kora holo
-    draw_text(NAME_POS_X, NAME_POS_Y, name, font_large, font_large_cherokee, 2)
+    # Draw Name and Guild using original offsets from configuration
+    draw_text(NAME_X, NAME_Y, name, font_large, font_large_cherokee, 4)
+    
     if guild:
-        draw_text(NAME_POS_X, GUILD_POS_Y, guild, font_small, font_small_cherokee, 2)
+        draw_text(GUILD_X, GUILD_Y, guild, font_small, font_small_cherokee, 3)
 
-    # Level dynamic number text (Lvl. 1 drayga purono num ta replace korbe)
-    lvl_text = f"{level}"
-    draw_text(LEVEL_POS_X, LEVEL_POS_Y, lvl_text, font_level, font_level, 2)
+    # 3. LEVEL REPLACEMENT LOGIC
+    lvl_text = f"Lvl.{level}"
+    
+    # If a mask color is provided, draw a rectangle to hide old level text
+    if LEVEL_MASK_COLOR:
+        bbox = draw.textbbox((LEVEL_X, LEVEL_Y), lvl_text, font=font_level)
+        draw.rectangle(bbox, fill=LEVEL_MASK_COLOR)
+    
+    # Draw new level exactly on top
+    # Using a small black stroke for level to ensure readability/coverage
+    for dx in range(-2, 3):
+        for dy in range(-2, 3):
+            draw.text((LEVEL_X + dx, LEVEL_Y + dy), lvl_text, font=font_level, fill="black")
+    
+    draw.text((LEVEL_X, LEVEL_Y), lvl_text, font=font_level, fill=LEVEL_TEXT_COLOR)
 
+    # Save to IO
     img_io = io.BytesIO()
-    combined.save(img_io, "PNG")
+    combined.save(img_io, "PNG", optimize=True)
     img_io.seek(0)
     return img_io
 
@@ -178,16 +213,16 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
 async def get_banner(uid: str):
     if not uid:
         raise HTTPException(status_code=400, detail="UID required")
-
+    
     try:
         resp = await client.get(f"{INFO_API_URL}{uid}")
         if resp.status_code != 200:
             raise HTTPException(status_code=502, detail="Player Info API is down")
-        
         data = resp.json()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching data: {str(e)}")
 
+    # ================= MAPPING API RESPONSE =================
     basic_info = data.get("basicInfo", {})
     clan_info = data.get("clanBasicInfo", {})
     
@@ -200,10 +235,12 @@ async def get_banner(uid: str):
     account_level = basic_info.get("level", "0")
     guild_name = clan_info.get("clanName", "")
 
-    avatar_task = fetch_avatar_bytes(avatar_id)
-    banner_task = fetch_banner_bytes(banner_id)
-    avatar, banner = await asyncio.gather(avatar_task, banner_task)
+    # Fetching Assets
+    avatar_task = fetch_image_bytes(avatar_id, is_banner=False)
+    banner_task = fetch_image_bytes(banner_id, is_banner=True) # Now pulls from GitHub
     
+    avatar_bytes, banner_bytes = await asyncio.gather(avatar_task, banner_task)
+
     banner_data = {
         "AccountLevel": account_level,
         "AccountName": account_name,
@@ -211,11 +248,17 @@ async def get_banner(uid: str):
     }
 
     loop = asyncio.get_event_loop()
-    img_io = await loop.run_in_executor(process_pool, process_banner_image, banner_data, avatar, banner)
+    img_io = await loop.run_in_executor(
+        process_pool, 
+        process_banner_image, 
+        banner_data, 
+        avatar_bytes, 
+        banner_bytes
+    )
 
     return Response(
-        content=img_io.getvalue(), 
-        media_type="image/png", 
+        content=img_io.getvalue(),
+        media_type="image/png",
         headers={"Cache-Control": "public, max-age=300"}
     )
 
