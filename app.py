@@ -9,21 +9,20 @@ from PIL import Image, ImageDraw, ImageFont
 from concurrent.futures import ThreadPoolExecutor
 
 # ================= PERFECT ADJUSTMENT SETTINGS =================
-# 1. Avatar Position: Banner er bamer default chhoto box er thik upore bshbe
-AVATAR_POS_X = 22       
-AVATAR_POS_Y = 32       
-AVATAR_SIZE = 72        
+# 1. Avatar Position: লাল মার্ক করা ছোট বক্সের জন্য
+AVATAR_POS_X = 20       
+AVATAR_POS_Y = 30       
+AVATAR_SIZE = 75        
 
-# 2. Text Position (Center-Right faka jaygata): Name ebong Guild thakbe eikane
-NAME_POS_X = 350        # Red mark deya boro faka box er shuru
-NAME_POS_Y = 35        
-GUILD_POS_Y = 75       
+# 2. Text Position (সাদা বড় ফাঁকা বক্স): Name এবং Guild এখানে বসবে
+NAME_POS_X = 275        # সাদা বক্সের শুরুর পজিশন
+NAME_POS_Y = 45         # নামের উচ্চতা
+GUILD_POS_Y = 95        # গিল্ডের উচ্চতা (নামের একটু নিচে)
 
-# 3. Level Position: 'Lvl. ' lekha tar thik pore bshbe (Bottom-Right)
-LEVEL_POS_X = 948       # 'Lvl.' lekha tar porer perfect pixel position
-LEVEL_POS_Y = 315       
-
-# ================= Lifespan =================
+# 3. Level Position: সবুজ বক্স (Lvl. ১ লেখা যেখানে আছে)
+LEVEL_POS_X = 948       # 'Lvl.' এর ঠিক পরের পিক্সেল
+LEVEL_POS_Y = 312       # নিচের দিকে এলাইনমেন্ট
+# ===============================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
