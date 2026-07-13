@@ -10,7 +10,6 @@ from PIL import Image, ImageDraw, ImageFont
 from concurrent.futures import ThreadPoolExecutor
 
 # ================= ADJUSTMENT SETTINGS =================
-# ফাইনাল ইমেজ সাইজ এখন ফিক্সড ২০৪৮ x ৫১২
 TARGET_WIDTH = 2048
 TARGET_HEIGHT = 512
 
@@ -54,7 +53,6 @@ def load_unicode_font(size, font_file=FONT_FILE):
         print(f"[FONT ERROR] Could not load custom font {font_file}: {e}")
     return ImageFont.load_default()
 
-# Avatar Fetcher
 async def fetch_image_bytes(item_id):
     if not item_id or str(item_id) in ["0", "None", "null"]:
         return None
@@ -67,7 +65,6 @@ async def fetch_image_bytes(item_id):
         print(f"DEBUG: Error fetching image {item_id}: {e}")
     return None
 
-# Banner Fetcher
 async def fetch_banner_bytes(banner_id):
     if not banner_id or str(banner_id) in ["0", "None", "null"]:
         return None
@@ -90,59 +87,55 @@ def bytes_to_image(img_bytes, default_w=512, default_h=512):
 
 # ================= IMAGE PROCESS =================
 def process_banner_image(data, avatar_bytes, banner_bytes):
-    # অবতার এবং ব্যানার ইমেজ লোড করা
-    avatar_img = bytes_to_image(avatar_bytes, default_w=TARGET_HEIGHT, default_h=TARGET_HEIGHT)
-    banner_img = bytes_to_image(banner_bytes, default_w=TARGET_WIDTH, default_h=TARGET_HEIGHT)
+    # Load Images
+    raw_avatar = bytes_to_image(avatar_bytes, default_w=512, default_h=512)
+    raw_banner = bytes_to_image(banner_bytes, default_w=TARGET_WIDTH, default_h=TARGET_HEIGHT)
     
     level = str(data.get("AccountLevel", "0"))
     name = data.get("AccountName", "Unknown")
     guild = data.get("GuildName", "")
 
-    # ১. অবতার সাইজ ফিক্সিং (Crop transparent padding and center in 512x512)
-    bbox = avatar_img.getbbox()
+    # 1. Fix Avatar: Remove padding, maintain aspect ratio, center in 512x512 transparent canvas
+    bbox = raw_avatar.getbbox()
     if bbox:
-        avatar_img = avatar_img.crop(bbox)
+        raw_avatar = raw_avatar.crop(bbox)
     
-    orig_av_w, orig_av_h = avatar_img.size
-    ratio = min(512 / orig_av_w, 512 / orig_av_h)
-    new_av_size = (int(orig_av_w * ratio), int(orig_av_h * ratio))
-    avatar_img = avatar_img.resize(new_av_size, Image.LANCZOS)
+    orig_w, orig_h = raw_avatar.size
+    ratio = min(512 / orig_w, 512 / orig_h)
+    new_size = (int(orig_w * ratio), int(orig_h * ratio))
+    raw_avatar = raw_avatar.resize(new_size, Image.LANCZOS)
     
-    final_avatar = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
-    av_offset = ((512 - new_av_size[0]) // 2, (512 - new_av_size[1]) // 2)
-    final_avatar.paste(avatar_img, av_offset, avatar_img)
-    avatar_img = final_avatar
-    av_w = 512
+    avatar_canvas = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
+    offset = ((512 - new_size[0]) // 2, (512 - new_size[1]) // 2)
+    avatar_canvas.paste(raw_avatar, offset, raw_avatar)
 
-    # ২. ব্যানার সাইজ ফিক্সিং (Aspect ratio resize + center crop)
-    b_w, b_h = banner_img.size
-    target_ratio = TARGET_WIDTH / TARGET_HEIGHT
-    img_ratio = b_w / b_h
+    # 2. Fix Banner: Center Crop to 2048x512 without stretching
+    b_w, b_h = raw_banner.size
+    target_aspect = TARGET_WIDTH / TARGET_HEIGHT
+    current_aspect = b_w / b_h
 
-    if img_ratio > target_ratio:
-        new_h = TARGET_HEIGHT
-        new_w = int(new_h * img_ratio)
+    if current_aspect > target_aspect:
+        # Image is too wide
+        scale_height = TARGET_HEIGHT
+        scale_width = int(scale_height * current_aspect)
     else:
-        new_w = TARGET_WIDTH
-        new_h = int(new_w / img_ratio)
+        # Image is too tall
+        scale_width = TARGET_WIDTH
+        scale_height = int(scale_width / current_aspect)
 
-    banner_img = banner_img.resize((new_w, new_h), Image.LANCZOS)
+    raw_banner = raw_banner.resize((scale_width, scale_height), Image.LANCZOS)
     
-    left = (new_w - TARGET_WIDTH) // 2
-    top = (new_h - TARGET_HEIGHT) // 2
-    banner_img = banner_img.crop((left, top, left + TARGET_WIDTH, top + TARGET_HEIGHT))
+    left = (scale_width - TARGET_WIDTH) // 2
+    top = (scale_height - TARGET_HEIGHT) // 2
+    banner_final = raw_banner.crop((left, top, left + TARGET_WIDTH, top + TARGET_HEIGHT))
 
-    # ৩. কম্বাইন্ড ক্যানভাস তৈরি (২০৪৮ x ৫১২ পিক্সেল)
+    # 3. Composite everything
     combined = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), (0, 0, 0, 0))
-    
-    # প্রথমে পুরো ব্যাকগ্রাউন্ডে ব্যানার পেস্ট করা হলো
-    combined.paste(banner_img, (0, 0))
-    # ব্যানারের ওপর বাম কোণায় অবতারটি বসানো হলো
-    combined.paste(avatar_img, (0, 0), avatar_img)
+    combined.paste(banner_final, (0, 0))
+    combined.paste(avatar_canvas, (0, 0), avatar_canvas)
 
     draw = ImageDraw.Draw(combined)
     
-    # ফন্ট সাইজ পিক্সেল রেশিও অনুযায়ী অ্যাডজাস্ট করা হয়েছে
     font_large = load_unicode_font(140)
     font_large_cherokee = load_unicode_font(140, FONT_CHEROKEE)
     font_small = load_unicode_font(100)
@@ -162,19 +155,18 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
             draw.text((cx, y), ch, font=f, fill="white")
             cx += f.getlength(ch)
 
-    # লেখাগুলোর পজিশন অবতারের ডানে সেট করা হয়েছে
-    draw_text(av_w + 80, 50, name, font_large, font_large_cherokee, 5)
+    # Text Positions
+    draw_text(512 + 80, 50, name, font_large, font_large_cherokee, 5)
     if guild:
-        draw_text(av_w + 80, 260, guild, font_small, font_small_cherokee, 4)
+        draw_text(512 + 80, 260, guild, font_small, font_small_cherokee, 4)
 
-    # লেভেল ডিসপ্লে (ডানদিকের নিচে ২য় ছবির মতো পজিশন)
+    # Level Display
     lvl_text = f"Lvl. {level}"
-    bbox = draw.textbbox((0, 0), lvl_text, font=font_level)
-    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    bbox_lvl = draw.textbbox((0, 0), lvl_text, font=font_level)
+    lw, lh = bbox_lvl[2] - bbox_lvl[0], bbox_lvl[3] - bbox_lvl[1]
     
-    # টেক্সটের চারপাশে ব্যাকগ্রাউন্ড বক্স
-    draw.rectangle([TARGET_WIDTH - w - 80, TARGET_HEIGHT - h - 60, TARGET_WIDTH - 30, TARGET_HEIGHT - 20], fill="black")
-    draw.text((TARGET_WIDTH - w - 55, TARGET_HEIGHT - h - 50), lvl_text, font=font_level, fill="white")
+    draw.rectangle([TARGET_WIDTH - lw - 80, TARGET_HEIGHT - lh - 60, TARGET_WIDTH - 30, TARGET_HEIGHT - 20], fill="black")
+    draw.text((TARGET_WIDTH - lw - 55, TARGET_HEIGHT - lh - 50), lvl_text, font=font_level, fill="white")
     
     img_io = io.BytesIO()
     combined.save(img_io, "PNG")
