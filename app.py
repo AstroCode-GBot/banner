@@ -31,8 +31,8 @@ app.add_middleware(
 )
 
 INFO_API_URL = "https://atozinfo.vercel.app/info?uid="
-BASE64_URL = "aHR0cHM6Ly9jZG4uanNkZWxpdnIubmV0L2doL1NoYWhHQ3JlYXRvci9pY29uQG1haW4vUE5H"
-IMAGE_BASE_URL = base64.b64decode(BASE64_URL).decode('utf-8')
+# Updated Avatar API URL
+IMAGE_BASE_URL = "https://iconapi.wasmer.app/headpic"
 FONT_FILE = "arial_unicode_bold.otf"
 FONT_CHEROKEE = "NotoSansCherokee.ttf"
 
@@ -97,19 +97,16 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
     name = data.get("AccountName", "Unknown")
     guild = data.get("GuildName", "")
 
-    # 1. Avatar: Crop from white border (removing outer pink/transparency) and Zoom
-    # We use getbbox to find the white border area and crop strictly to visible content
+    # 1. Avatar: Crop from white border and Zoom to fill 512x512
     bbox = avatar_img.getbbox()
     if bbox:
         avatar_img = avatar_img.crop(bbox)
     
-    # Zoom logic: Scale to FILL the 512x512 area entirely
     orig_av_w, orig_av_h = avatar_img.size
     zoom_scale = max(AVATAR_SIZE / orig_av_w, AVATAR_SIZE / orig_av_h)
     new_av_size = (int(orig_av_w * zoom_scale), int(orig_av_h * zoom_scale))
     avatar_img = avatar_img.resize(new_av_size, Image.LANCZOS)
     
-    # Center crop the zoomed result to maintain 512x512
     left_av = (avatar_img.width - AVATAR_SIZE) // 2
     top_av = (avatar_img.height - AVATAR_SIZE) // 2
     avatar_final = avatar_img.crop((left_av, top_av, left_av + AVATAR_SIZE, top_av + AVATAR_SIZE))
@@ -157,27 +154,37 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
     if guild:
         draw_text(AVATAR_SIZE + text_margin, 260, guild, font_small, font_small_cherokee, 5)
 
-    # 4. Level Section: Blurred Background + Red Box
+    # 4. Level Section: Transparent Blur aligned to Right/Bottom edges
     lvl_text = f"Lvl. {level}"
     bbox_lvl = draw.textbbox((0, 0), lvl_text, font=font_level)
     lw, lh = bbox_lvl[2] - bbox_lvl[0], bbox_lvl[3] - bbox_lvl[1]
     
-    # Box dimensions and position (Bottom Right)
-    box_w = lw + 60
-    box_h = lh + 40
-    rect_x1 = TARGET_WIDTH - box_w - 50
-    rect_y1 = TARGET_HEIGHT - box_h - 40
-    rect_x2 = TARGET_WIDTH - 50
-    rect_y2 = TARGET_HEIGHT - 40
+    # Calculate box dimensions to reach the edges
+    box_w = lw + 100
+    box_h = lh + 60
+    
+    # Coordinates aligned exactly to the right and bottom edges
+    rect_x1 = TARGET_WIDTH - box_w
+    rect_y1 = TARGET_HEIGHT - box_h
+    rect_x2 = TARGET_WIDTH
+    rect_y2 = TARGET_HEIGHT
 
-    # Blur only the background area behind the level box
-    blur_region = combined.crop((rect_x1 - 20, rect_y1 - 20, rect_x2 + 20, rect_y2 + 20))
-    blur_region = blur_region.filter(ImageFilter.GaussianBlur(radius=15))
-    combined.paste(blur_region, (rect_x1 - 20, rect_y1 - 20))
+    # Blur the background area behind where the level will be
+    blur_box = (rect_x1, rect_y1, rect_x2, rect_y2)
+    blur_region = combined.crop(blur_box)
+    blur_region = blur_region.filter(ImageFilter.GaussianBlur(radius=20))
+    combined.paste(blur_region, (rect_x1, rect_y1))
 
-    # Draw Red Box and Level Text
-    draw.rectangle([rect_x1, rect_y1, rect_x2, rect_y2], fill=(255, 59, 59, 255))
-    draw.text((rect_x1 + 30, rect_y1 + 10), lvl_text, font=font_level, fill="white")
+    # Draw Level Text with stroke on top of blurred area (Red BG removed)
+    text_x = rect_x1 + (box_w - lw) // 2
+    text_y = rect_y1 + (box_h - lh) // 2 - 10
+    
+    # Draw text with heavy stroke for visibility on blur
+    stroke_val = 5
+    for dx in range(-stroke_val, stroke_val + 1):
+        for dy in range(-stroke_val, stroke_val + 1):
+            draw.text((text_x + dx, text_y + dy), lvl_text, font=font_level, fill="black")
+    draw.text((text_x, text_y), lvl_text, font=font_level, fill="white")
     
     img_io = io.BytesIO()
     combined.save(img_io, "PNG")
