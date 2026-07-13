@@ -6,7 +6,7 @@ import base64
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from concurrent.futures import ThreadPoolExecutor
 
 # ================= ADJUSTMENT SETTINGS =================
@@ -55,7 +55,6 @@ def load_unicode_font(size, font_file=FONT_FILE):
         print(f"[FONT ERROR] Could not load custom font {font_file}: {e}")
     return ImageFont.load_default()
 
-# Avatar Fetcher
 async def fetch_image_bytes(item_id):
     if not item_id or str(item_id) in ["0", "None", "null"]:
         return None
@@ -68,7 +67,6 @@ async def fetch_image_bytes(item_id):
         print(f"DEBUG: Error fetching image {item_id}: {e}")
     return None
 
-# Banner Fetcher
 async def fetch_banner_bytes(banner_id):
     if not banner_id or str(banner_id) in ["0", "None", "null"]:
         return None
@@ -99,23 +97,24 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
     name = data.get("AccountName", "Unknown")
     guild = data.get("GuildName", "")
 
-    # 1. Process Avatar (Zoom to fill 512x512 area after cropping alpha)
+    # 1. Avatar: Crop from white border (removing outer pink/transparency) and Zoom
+    # We use getbbox to find the white border area and crop strictly to visible content
     bbox = avatar_img.getbbox()
     if bbox:
         avatar_img = avatar_img.crop(bbox)
     
-    av_w, av_h = avatar_img.size
-    # Calculate scale to FILL the 512x512 area (Zoom effect)
-    scale = max(AVATAR_SIZE / av_w, AVATAR_SIZE / av_h)
-    new_av_size = (int(av_w * scale), int(av_h * scale))
+    # Zoom logic: Scale to FILL the 512x512 area entirely
+    orig_av_w, orig_av_h = avatar_img.size
+    zoom_scale = max(AVATAR_SIZE / orig_av_w, AVATAR_SIZE / orig_av_h)
+    new_av_size = (int(orig_av_w * zoom_scale), int(orig_av_h * zoom_scale))
     avatar_img = avatar_img.resize(new_av_size, Image.LANCZOS)
     
-    # Center Crop the zoomed avatar to exactly 512x512
-    left_av = (new_av_size[0] - AVATAR_SIZE) // 2
-    top_av = (new_av_size[1] - AVATAR_SIZE) // 2
+    # Center crop the zoomed result to maintain 512x512
+    left_av = (avatar_img.width - AVATAR_SIZE) // 2
+    top_av = (avatar_img.height - AVATAR_SIZE) // 2
     avatar_final = avatar_img.crop((left_av, top_av, left_av + AVATAR_SIZE, top_av + AVATAR_SIZE))
 
-    # 2. Process Banner (Resize and Center Crop to fill 1536x512)
+    # 2. Banner: Resize and Crop to fill 1536x512
     b_w, b_h = banner_img.size
     scale_b = max(BANNER_WIDTH / b_w, TARGET_HEIGHT / b_h)
     new_b_size = (int(b_w * scale_b), int(b_h * scale_b))
@@ -125,21 +124,19 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
     top_b = (new_b_size[1] - TARGET_HEIGHT) // 2
     banner_final = banner_img.crop((left_b, top_b, left_b + BANNER_WIDTH, top_b + TARGET_HEIGHT))
 
-    # 3. Create Canvas and Composite (Blueprint Layout)
-    combined = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), (255, 255, 255, 255))
-    
-    # Place Avatar on the left (0 to 512)
-    combined.paste(avatar_final, (0, 0), avatar_final)
-    # Place Banner on the right (512 to 2048)
+    # 3. Canvas Composition
+    combined = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), (0, 0, 0, 255))
     combined.paste(banner_final, (AVATAR_SIZE, 0))
+    combined.paste(avatar_final, (0, 0), avatar_final)
 
     draw = ImageDraw.Draw(combined)
     
+    # Fonts
     font_large = load_unicode_font(140)
     font_large_cherokee = load_unicode_font(140, FONT_CHEROKEE)
     font_small = load_unicode_font(100)
     font_small_cherokee = load_unicode_font(100, FONT_CHEROKEE)
-    font_level = load_unicode_font(70)
+    font_level = load_unicode_font(75)
 
     def is_cherokee(c):
         return 0x13A0 <= ord(c) <= 0x13FF or 0xAB70 <= ord(c) <= 0xABBF
@@ -154,23 +151,33 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
             draw.text((cx, y), ch, font=f, fill="white")
             cx += f.getlength(ch)
 
-    # Place text on the banner area (starting at X=512 + margin)
+    # Text Placement
     text_margin = 80
-    draw_text(AVATAR_SIZE + text_margin, 50, name, font_large, font_large_cherokee, 5)
+    draw_text(AVATAR_SIZE + text_margin, 50, name, font_large, font_large_cherokee, 6)
     if guild:
-        draw_text(AVATAR_SIZE + text_margin, 260, guild, font_small, font_small_cherokee, 4)
+        draw_text(AVATAR_SIZE + text_margin, 260, guild, font_small, font_small_cherokee, 5)
 
-    # Level Display (Red Box at bottom right as per blueprint)
+    # 4. Level Section: Blurred Background + Red Box
     lvl_text = f"Lvl. {level}"
     bbox_lvl = draw.textbbox((0, 0), lvl_text, font=font_level)
     lw, lh = bbox_lvl[2] - bbox_lvl[0], bbox_lvl[3] - bbox_lvl[1]
     
-    # Box position (bottom right)
-    box_padding_x = 30
-    box_padding_y = 20
-    rect_coords = [TARGET_WIDTH - lw - 80, TARGET_HEIGHT - lh - 60, TARGET_WIDTH - 30, TARGET_HEIGHT - 20]
-    draw.rectangle(rect_coords, fill=(255, 59, 59, 255)) # Red Box
-    draw.text((TARGET_WIDTH - lw - 55, TARGET_HEIGHT - lh - 50), lvl_text, font=font_level, fill="white")
+    # Box dimensions and position (Bottom Right)
+    box_w = lw + 60
+    box_h = lh + 40
+    rect_x1 = TARGET_WIDTH - box_w - 50
+    rect_y1 = TARGET_HEIGHT - box_h - 40
+    rect_x2 = TARGET_WIDTH - 50
+    rect_y2 = TARGET_HEIGHT - 40
+
+    # Blur only the background area behind the level box
+    blur_region = combined.crop((rect_x1 - 20, rect_y1 - 20, rect_x2 + 20, rect_y2 + 20))
+    blur_region = blur_region.filter(ImageFilter.GaussianBlur(radius=15))
+    combined.paste(blur_region, (rect_x1 - 20, rect_y1 - 20))
+
+    # Draw Red Box and Level Text
+    draw.rectangle([rect_x1, rect_y1, rect_x2, rect_y2], fill=(255, 59, 59, 255))
+    draw.text((rect_x1 + 30, rect_y1 + 10), lvl_text, font=font_level, fill="white")
     
     img_io = io.BytesIO()
     combined.save(img_io, "PNG")
