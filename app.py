@@ -9,20 +9,30 @@ from PIL import Image, ImageDraw, ImageFont
 from concurrent.futures import ThreadPoolExecutor
 
 # ================= PERFECT ADJUSTMENT SETTINGS =================
-# 1. Avatar Position: লাল মার্ক করা ছোট বক্সের জন্য
-AVATAR_POS_X = 20       
-AVATAR_POS_Y = 30       
-AVATAR_SIZE = 75        
+# 1. Avatar Position & Size: বাম পাশের গ্রাফিক্স বক্সটি পুরোপুরি ঢেকে দেওয়ার জন্য বড় করা হলো
+AVATAR_POS_X = 15        # বাম থেকে দূরত্ব
+AVATAR_POS_Y = 15        # উপর থেকে দূরত্ব
+AVATAR_SIZE = 240        # সাইজ অনেক বাড়ানো হলো যাতে পেছনের ব্যাকগ্রাউন্ড ঢাকা পড়ে
 
-# 2. Text Position (সাদা বড় ফাঁকা বক্স): Name এবং Guild এখানে বসবে
-NAME_POS_X = 275        # সাদা বক্সের শুরুর পজিশন
-NAME_POS_Y = 45         # নামের উচ্চতা
-GUILD_POS_Y = 95        # গিল্ডের উচ্চতা (নামের একটু নিচে)
+# 2. Text Position (বড় সাদা বক্স): নাম এবং গিল্ডের জন্য
+NAME_POS_X = 280         # এভাটার বড় হওয়ায় নাম একটু ডানে সরানো হলো
+NAME_POS_Y = 50          # নামের উচ্চতা
+GUILD_POS_Y = 110        # গিল্ডের উচ্চতা
 
-# 3. Level Position: সবুজ বক্স (Lvl. ১ লেখা যেখানে আছে)
-LEVEL_POS_X = 948       # 'Lvl.' এর ঠিক পরের পিক্সেল
-LEVEL_POS_Y = 312       # নিচের দিকে এলাইনমেন্ট
+# 3. Level Position: 'Lvl.' এর ঠিক পাশে বড় করে বসবে
+LEVEL_POS_X = 945        # ডানে নিচে পজিশন
+LEVEL_POS_Y = 305        # উচ্চতা অ্যাডজাস্ট করা হলো
 # ===============================================================
+
+# নিচের Font Size গুলোও আপডেট করতে হবে (process_banner_image ফাংশনের ভেতরে)
+# process_banner_image ফাংশনের ভেতরে নিচের লাইনগুলো পরিবর্তন করুন:
+
+    # ফন্ট সাইজ বড় করা হলো যাতে নাম এবং লেভেল ফুটে ওঠে
+    font_large = load_unicode_font(55)           # নামের সাইজ (আগে ছিল ৩২)
+    font_large_cherokee = load_unicode_font(55, FONT_CHEROKEE)
+    font_small = load_unicode_font(30)           # গিল্ডের সাইজ (আগে ছিল ২৪)
+    font_small_cherokee = load_unicode_font(30, FONT_CHEROKEE)
+    font_level = load_unicode_font(65)           # লেভেলের সাইজ (আগে ছিল ৪০)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
