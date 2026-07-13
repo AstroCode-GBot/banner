@@ -9,19 +9,19 @@ from PIL import Image, ImageDraw, ImageFont
 from concurrent.futures import ThreadPoolExecutor
 
 # ================= PERFECT ADJUSTMENT SETTINGS =================
-# ব্যানারের ভেতরের ডিফল্ট বক্সের ওপর অ্যাভাটার বসানোর জন্য পজিশন (পিক্সেল অনুযায়ী)
-AVATAR_POS_X = 23       # ব্যানারের বর্ডার থেকে ডানে সরানোর জন্য
-AVATAR_POS_Y = 32       # ব্যানারের উপর থেকে নিচে নামানোর জন্য
-AVATAR_SIZE = 72        # ব্যানারের ভেতরের বক্সের সাথে মেলানোর সাইজ
+# 1. Avatar Position: Banner er bamer default chhoto box er thik upore bshbe
+AVATAR_POS_X = 22       
+AVATAR_POS_Y = 32       
+AVATAR_SIZE = 72        
 
-# লেভেল টেক্সটের পজিশন (ডানদিকের Lvl. লেখার সাথে অ্যাডজাস্ট করা)
-LEVEL_POS_X = 930       
+# 2. Text Position (Center-Right faka jaygata): Name ebong Guild thakbe eikane
+NAME_POS_X = 350        # Red mark deya boro faka box er shuru
+NAME_POS_Y = 35        
+GUILD_POS_Y = 75       
+
+# 3. Level Position: 'Lvl. ' lekha tar thik pore bshbe (Bottom-Right)
+LEVEL_POS_X = 948       # 'Lvl.' lekha tar porer perfect pixel position
 LEVEL_POS_Y = 315       
-
-# নাম এবং গিল্ডের পজিশন (অ্যাভাটার বক্সের ঠিক ডান পাশে)
-NAME_POS_X = 110
-NAME_POS_Y = 32
-GUILD_POS_Y = 75
 
 # ================= Lifespan =================
 @asynccontextmanager
@@ -115,7 +115,6 @@ def bytes_to_image(img_bytes, default_size=(400, 400)):
     
 # ================= IMAGE PROCESS =================
 def process_banner_image(data, avatar_bytes, banner_bytes):
-    # গিটহাব বা লোকাল থেকে ব্যানার লোড (কোনো ক্রপিং ছাড়া অরিজিনাল সাইজ রাখা হচ্ছে)
     banner_img = load_banner_image(banner_bytes)
     avatar_img = bytes_to_image(avatar_bytes, default_size=(200, 200))
 
@@ -123,21 +122,21 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
     name = data.get("AccountName", "Unknown")
     guild = data.get("GuildName", "")
 
-    # মেইন ক্যানভাস তৈরি
+    # Main canvas (No crop)
     combined = banner_img.copy()
     
-    # অ্যাভাটারটিকে নির্দিষ্ট ছোট বক্সে ওভারল্যাপ করার জন্য রিসাইজ ও পেস্ট
+    # Avatar layer overlay (Purono avatar dharer box dhakbe)
     avatar_img = avatar_img.resize((AVATAR_SIZE, AVATAR_SIZE), Image.LANCZOS)
     combined.paste(avatar_img, (AVATAR_POS_X, AVATAR_POS_Y), avatar_img)
 
     draw = ImageDraw.Draw(combined)
     
-    # ব্যানারের অরিজিনাল ডাইমেনশন অনুযায়ী ফন্ট সাইজ ফিক্সড করা হয়েছে
+    # Perfect font sizes based on your design
     font_large = load_unicode_font(32)
     font_large_cherokee = load_unicode_font(32, FONT_CHEROKEE)
     font_small = load_unicode_font(24)
     font_small_cherokee = load_unicode_font(24, FONT_CHEROKEE)
-    font_level = load_unicode_font(40)  # Lvl. 1 লেখার সাথে ম্যাচিং সাইজ
+    font_level = load_unicode_font(40)  # Lvl. boro lekhata match korte
 
     def is_cherokee(c):
         return 0x13A0 <= ord(c) <= 0x13FF or 0xAB70 <= ord(c) <= 0xABBF
@@ -152,14 +151,14 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
             draw.text((cx, y), ch, font=f, fill="white")
             cx += f.getlength(ch)
 
-    # নাম এবং গিল্ড টেক্সট ড্র করা
+    # Name ebong Guild text center red mark box e draw kora holo
     draw_text(NAME_POS_X, NAME_POS_Y, name, font_large, font_large_cherokee, 2)
     if guild:
         draw_text(NAME_POS_X, GUILD_POS_Y, guild, font_small, font_small_cherokee, 2)
 
-    # লেভেল নাম্বারটি ব্যানারের "Lvl. " টেক্সটের ঠিক পাশে বসানো
+    # Level dynamic number text (Lvl. 1 drayga purono num ta replace korbe)
     lvl_text = f"{level}"
-    draw.text((LEVEL_POS_X, LEVEL_POS_Y), lvl_text, font=font_level, fill="white", stroke_width=2, stroke_fill="black")
+    draw_text(LEVEL_POS_X, LEVEL_POS_Y, lvl_text, font_level, font_level, 2)
 
     img_io = io.BytesIO()
     combined.save(img_io, "PNG")
