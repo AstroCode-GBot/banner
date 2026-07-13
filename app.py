@@ -12,6 +12,8 @@ from concurrent.futures import ThreadPoolExecutor
 # ================= ADJUSTMENT SETTINGS =================
 TARGET_WIDTH = 2048
 TARGET_HEIGHT = 512
+AVATAR_SIZE = 512
+BANNER_WIDTH = TARGET_WIDTH - AVATAR_SIZE # 1536
 
 # ================= Lifespan =================
 @asynccontextmanager
@@ -53,6 +55,7 @@ def load_unicode_font(size, font_file=FONT_FILE):
         print(f"[FONT ERROR] Could not load custom font {font_file}: {e}")
     return ImageFont.load_default()
 
+# Avatar Fetcher
 async def fetch_image_bytes(item_id):
     if not item_id or str(item_id) in ["0", "None", "null"]:
         return None
@@ -65,6 +68,7 @@ async def fetch_image_bytes(item_id):
         print(f"DEBUG: Error fetching image {item_id}: {e}")
     return None
 
+# Banner Fetcher
 async def fetch_banner_bytes(banner_id):
     if not banner_id or str(banner_id) in ["0", "None", "null"]:
         return None
@@ -83,56 +87,51 @@ def bytes_to_image(img_bytes, default_w=512, default_h=512):
             return Image.open(io.BytesIO(img_bytes)).convert("RGBA")
         except:
             pass
-    return Image.new("RGBA", (default_w, default_h), (40, 40, 40, 255))
+    return Image.new("RGBA", (default_w, default_h), (255, 255, 255, 0))
 
 # ================= IMAGE PROCESS =================
 def process_banner_image(data, avatar_bytes, banner_bytes):
-    # Load Images
-    raw_avatar = bytes_to_image(avatar_bytes, default_w=512, default_h=512)
-    raw_banner = bytes_to_image(banner_bytes, default_w=TARGET_WIDTH, default_h=TARGET_HEIGHT)
+    # Load raw images
+    avatar_img = bytes_to_image(avatar_bytes, default_w=AVATAR_SIZE, default_h=AVATAR_SIZE)
+    banner_img = bytes_to_image(banner_bytes, default_w=BANNER_WIDTH, default_h=TARGET_HEIGHT)
     
     level = str(data.get("AccountLevel", "0"))
     name = data.get("AccountName", "Unknown")
     guild = data.get("GuildName", "")
 
-    # 1. Fix Avatar: Remove padding, maintain aspect ratio, center in 512x512 transparent canvas
-    bbox = raw_avatar.getbbox()
+    # 1. Process Avatar (Zoom to fill 512x512 area after cropping alpha)
+    bbox = avatar_img.getbbox()
     if bbox:
-        raw_avatar = raw_avatar.crop(bbox)
+        avatar_img = avatar_img.crop(bbox)
     
-    orig_w, orig_h = raw_avatar.size
-    ratio = min(512 / orig_w, 512 / orig_h)
-    new_size = (int(orig_w * ratio), int(orig_h * ratio))
-    raw_avatar = raw_avatar.resize(new_size, Image.LANCZOS)
+    av_w, av_h = avatar_img.size
+    # Calculate scale to FILL the 512x512 area (Zoom effect)
+    scale = max(AVATAR_SIZE / av_w, AVATAR_SIZE / av_h)
+    new_av_size = (int(av_w * scale), int(av_h * scale))
+    avatar_img = avatar_img.resize(new_av_size, Image.LANCZOS)
     
-    avatar_canvas = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
-    offset = ((512 - new_size[0]) // 2, (512 - new_size[1]) // 2)
-    avatar_canvas.paste(raw_avatar, offset, raw_avatar)
+    # Center Crop the zoomed avatar to exactly 512x512
+    left_av = (new_av_size[0] - AVATAR_SIZE) // 2
+    top_av = (new_av_size[1] - AVATAR_SIZE) // 2
+    avatar_final = avatar_img.crop((left_av, top_av, left_av + AVATAR_SIZE, top_av + AVATAR_SIZE))
 
-    # 2. Fix Banner: Center Crop to 2048x512 without stretching
-    b_w, b_h = raw_banner.size
-    target_aspect = TARGET_WIDTH / TARGET_HEIGHT
-    current_aspect = b_w / b_h
-
-    if current_aspect > target_aspect:
-        # Image is too wide
-        scale_height = TARGET_HEIGHT
-        scale_width = int(scale_height * current_aspect)
-    else:
-        # Image is too tall
-        scale_width = TARGET_WIDTH
-        scale_height = int(scale_width / current_aspect)
-
-    raw_banner = raw_banner.resize((scale_width, scale_height), Image.LANCZOS)
+    # 2. Process Banner (Resize and Center Crop to fill 1536x512)
+    b_w, b_h = banner_img.size
+    scale_b = max(BANNER_WIDTH / b_w, TARGET_HEIGHT / b_h)
+    new_b_size = (int(b_w * scale_b), int(b_h * scale_b))
+    banner_img = banner_img.resize(new_b_size, Image.LANCZOS)
     
-    left = (scale_width - TARGET_WIDTH) // 2
-    top = (scale_height - TARGET_HEIGHT) // 2
-    banner_final = raw_banner.crop((left, top, left + TARGET_WIDTH, top + TARGET_HEIGHT))
+    left_b = (new_b_size[0] - BANNER_WIDTH) // 2
+    top_b = (new_b_size[1] - TARGET_HEIGHT) // 2
+    banner_final = banner_img.crop((left_b, top_b, left_b + BANNER_WIDTH, top_b + TARGET_HEIGHT))
 
-    # 3. Composite everything
-    combined = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), (0, 0, 0, 0))
-    combined.paste(banner_final, (0, 0))
-    combined.paste(avatar_canvas, (0, 0), avatar_canvas)
+    # 3. Create Canvas and Composite (Blueprint Layout)
+    combined = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), (255, 255, 255, 255))
+    
+    # Place Avatar on the left (0 to 512)
+    combined.paste(avatar_final, (0, 0), avatar_final)
+    # Place Banner on the right (512 to 2048)
+    combined.paste(banner_final, (AVATAR_SIZE, 0))
 
     draw = ImageDraw.Draw(combined)
     
@@ -155,17 +154,22 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
             draw.text((cx, y), ch, font=f, fill="white")
             cx += f.getlength(ch)
 
-    # Text Positions
-    draw_text(512 + 80, 50, name, font_large, font_large_cherokee, 5)
+    # Place text on the banner area (starting at X=512 + margin)
+    text_margin = 80
+    draw_text(AVATAR_SIZE + text_margin, 50, name, font_large, font_large_cherokee, 5)
     if guild:
-        draw_text(512 + 80, 260, guild, font_small, font_small_cherokee, 4)
+        draw_text(AVATAR_SIZE + text_margin, 260, guild, font_small, font_small_cherokee, 4)
 
-    # Level Display
+    # Level Display (Red Box at bottom right as per blueprint)
     lvl_text = f"Lvl. {level}"
     bbox_lvl = draw.textbbox((0, 0), lvl_text, font=font_level)
     lw, lh = bbox_lvl[2] - bbox_lvl[0], bbox_lvl[3] - bbox_lvl[1]
     
-    draw.rectangle([TARGET_WIDTH - lw - 80, TARGET_HEIGHT - lh - 60, TARGET_WIDTH - 30, TARGET_HEIGHT - 20], fill="black")
+    # Box position (bottom right)
+    box_padding_x = 30
+    box_padding_y = 20
+    rect_coords = [TARGET_WIDTH - lw - 80, TARGET_HEIGHT - lh - 60, TARGET_WIDTH - 30, TARGET_HEIGHT - 20]
+    draw.rectangle(rect_coords, fill=(255, 59, 59, 255)) # Red Box
     draw.text((TARGET_WIDTH - lw - 55, TARGET_HEIGHT - lh - 50), lvl_text, font=font_level, fill="white")
     
     img_io = io.BytesIO()
