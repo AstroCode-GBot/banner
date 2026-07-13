@@ -6,11 +6,10 @@ import base64
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 from concurrent.futures import ThreadPoolExecutor
 
 # ================= ADJUSTMENT SETTINGS =================
-# ফাইনাল ইমেজ সাইজ এখন ফিক্সড ২০৪৮ x ৫১২
 TARGET_WIDTH = 2048
 TARGET_HEIGHT = 512
 
@@ -80,42 +79,43 @@ async def fetch_banner_bytes(banner_id):
         print(f"DEBUG: Error fetching banner {banner_id}: {e}")
     return None
 
-def bytes_to_image(img_bytes, default_w=512, default_h=512):
+def bytes_to_image(img_bytes, transparent=False, default_w=512, default_h=512):
     if img_bytes:
         try:
             return Image.open(io.BytesIO(img_bytes)).convert("RGBA")
         except:
             pass
+    # অবতারের জন্য সম্পূর্ণ ট্রান্সপারেন্ট ব্যাকগ্রাউন্ড, ব্যানারের জন্য ডার্ক ডিফল্ট
+    if transparent:
+        return Image.new("RGBA", (default_w, default_h), (0, 0, 0, 0))
     return Image.new("RGBA", (default_w, default_h), (40, 40, 40, 255))
 
 # ================= IMAGE PROCESS =================
 def process_banner_image(data, avatar_bytes, banner_bytes):
-    # অবতার এবং ব্যানার ইমেজ লোড করা
-    avatar_img = bytes_to_image(avatar_bytes, default_w=TARGET_HEIGHT, default_h=TARGET_HEIGHT)
-    banner_img = bytes_to_image(banner_bytes, default_w=TARGET_WIDTH, default_h=TARGET_HEIGHT)
+    # অবতার ট্রান্সপারেন্ট মোডে লোড হবে, কোনো সলিড ব্যাকগ্রাউন্ড থাকবে না
+    avatar_img = bytes_to_image(avatar_bytes, transparent=True, default_w=TARGET_HEIGHT, default_h=TARGET_HEIGHT)
+    banner_img = bytes_to_image(banner_bytes, transparent=False, default_w=TARGET_WIDTH, default_h=TARGET_HEIGHT)
     
     level = str(data.get("AccountLevel", "0"))
     name = data.get("AccountName", "Unknown")
     guild = data.get("GuildName", "")
 
-    # ১. অবতার সাইজ ফিক্সিং (ব্যানারের হাইট অনুযায়ী স্কয়ার সাইজ করা হলো)
+    # ১. অবতার রিসাইজ (স্কয়ার সাইজ এবং ট্রান্সপারেন্সি বজায় রাখা)
     avatar_img = avatar_img.resize((TARGET_HEIGHT, TARGET_HEIGHT), Image.LANCZOS)
-    av_w, _ = avatar_img.size
 
-    # ২. ব্যানার সাইজ ফিক্সিং (কোনো ক্রপ বা রোটেশন ছাড়া ফুল ২০৪৮ x ৫১২ সাইজে রিসাইজ)
-    banner_img = banner_img.resize((TARGET_WIDTH, TARGET_HEIGHT), Image.LANCZOS)
+    # ২. ব্যানারের স্ট্রেচিং ফিক্স (ImageOps.fit দিয়ে রেশিও ঠিক রেখে ২০৪৮x৫১২ তে ক্রপ ও ফিল করা)
+    banner_img = ImageOps.fit(banner_img, (TARGET_WIDTH, TARGET_HEIGHT), Image.LANCZOS)
 
-    # ৩. কম্বাইন্ড ক্যানভাস তৈরি (২০৪৮ x ৫১২ পিক্সেল)
+    # ৩. ফাইনাল ক্যানভাস তৈরি
     combined = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), (0, 0, 0, 255))
     
-    # প্রথমে পুরো ব্যাকগ্রাউন্ডে ব্যানার পেস্ট করা হলো
+    # প্রথমে ব্যানার পেস্ট করা হলো
     combined.paste(banner_img, (0, 0))
-    # ব্যানারের ওপর বাম কোণায় অবতারটি বসানো হলো
+    # এবার অবতার পেস্ট করা হলো (৩য় প্যারামিটারে অরিজিনাল আলফা মাস্ক ব্যবহার করায় পেছনের বিজি আসবে না)
     combined.paste(avatar_img, (0, 0), avatar_img)
 
     draw = ImageDraw.Draw(combined)
     
-    # ফন্ট সাইজ পিক্সেল রেশিও অনুযায়ী অ্যাডজাস্ট করা হয়েছে
     font_large = load_unicode_font(140)
     font_large_cherokee = load_unicode_font(140, FONT_CHEROKEE)
     font_small = load_unicode_font(100)
@@ -135,17 +135,16 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
             draw.text((cx, y), ch, font=f, fill="white")
             cx += f.getlength(ch)
 
-    # লেখাগুলোর পজিশন অবতারের ডানে সেট করা হয়েছে
-    draw_text(av_w + 80, 50, name, font_large, font_large_cherokee, 5)
+    # টেক্সট পজিশন
+    draw_text(TARGET_HEIGHT + 80, 50, name, font_large, font_large_cherokee, 5)
     if guild:
-        draw_text(av_w + 80, 260, guild, font_small, font_small_cherokee, 4)
+        draw_text(TARGET_HEIGHT + 80, 260, guild, font_small, font_small_cherokee, 4)
 
-    # লেভেল ডিসপ্লে (ডানদিকের নিচে ২য় ছবির মতো পজিশন)
+    # লেভেল ডিসপ্লে বক্স ও টেক্সট
     lvl_text = f"Lvl. {level}"
     bbox = draw.textbbox((0, 0), lvl_text, font=font_level)
     w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
     
-    # টেক্সটের চারপাশে ব্যাকগ্রাউন্ড বক্স
     draw.rectangle([TARGET_WIDTH - w - 80, TARGET_HEIGHT - h - 60, TARGET_WIDTH - 30, TARGET_HEIGHT - 20], fill="black")
     draw.text((TARGET_WIDTH - w - 55, TARGET_HEIGHT - h - 50), lvl_text, font=font_level, fill="white")
     
