@@ -98,15 +98,42 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
     name = data.get("AccountName", "Unknown")
     guild = data.get("GuildName", "")
 
-    # ১. অবতার সাইজ ফিক্সিং (ব্যানারের হাইট অনুযায়ী স্কয়ার সাইজ করা হলো)
-    avatar_img = avatar_img.resize((TARGET_HEIGHT, TARGET_HEIGHT), Image.LANCZOS)
-    av_w, _ = avatar_img.size
+    # ১. অবতার সাইজ ফিক্সিং (Crop transparent padding and center in 512x512)
+    bbox = avatar_img.getbbox()
+    if bbox:
+        avatar_img = avatar_img.crop(bbox)
+    
+    orig_av_w, orig_av_h = avatar_img.size
+    ratio = min(512 / orig_av_w, 512 / orig_av_h)
+    new_av_size = (int(orig_av_w * ratio), int(orig_av_h * ratio))
+    avatar_img = avatar_img.resize(new_av_size, Image.LANCZOS)
+    
+    final_avatar = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
+    av_offset = ((512 - new_av_size[0]) // 2, (512 - new_av_size[1]) // 2)
+    final_avatar.paste(avatar_img, av_offset, avatar_img)
+    avatar_img = final_avatar
+    av_w = 512
 
-    # ২. ব্যানার সাইজ ফিক্সিং (কোনো ক্রপ বা রোটেশন ছাড়া ফুল ২০৪৮ x ৫১২ সাইজে রিসাইজ)
-    banner_img = banner_img.resize((TARGET_WIDTH, TARGET_HEIGHT), Image.LANCZOS)
+    # ২. ব্যানার সাইজ ফিক্সিং (Aspect ratio resize + center crop)
+    b_w, b_h = banner_img.size
+    target_ratio = TARGET_WIDTH / TARGET_HEIGHT
+    img_ratio = b_w / b_h
+
+    if img_ratio > target_ratio:
+        new_h = TARGET_HEIGHT
+        new_w = int(new_h * img_ratio)
+    else:
+        new_w = TARGET_WIDTH
+        new_h = int(new_w / img_ratio)
+
+    banner_img = banner_img.resize((new_w, new_h), Image.LANCZOS)
+    
+    left = (new_w - TARGET_WIDTH) // 2
+    top = (new_h - TARGET_HEIGHT) // 2
+    banner_img = banner_img.crop((left, top, left + TARGET_WIDTH, top + TARGET_HEIGHT))
 
     # ৩. কম্বাইন্ড ক্যানভাস তৈরি (২০৪৮ x ৫১২ পিক্সেল)
-    combined = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), (0, 0, 0, 255))
+    combined = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), (0, 0, 0, 0))
     
     # প্রথমে পুরো ব্যাকগ্রাউন্ডে ব্যানার পেস্ট করা হলো
     combined.paste(banner_img, (0, 0))
