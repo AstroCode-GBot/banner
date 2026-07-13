@@ -8,14 +8,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, ImageDraw, ImageFont
 from concurrent.futures import ThreadPoolExecutor
 
-# ================= ADJUSTMENT SETTINGS =================
-# আপনার দেওয়া ইমেজের পজিশন অনুযায়ী পারফেক্ট কোঅর্ডিনেট সেট করা হয়েছে
-AVATAR_POS_X = 50       
-AVATAR_POS_Y = 50       
-AVATAR_SIZE = 150       
+# ================= PERFECT ADJUSTMENT SETTINGS =================
+# ব্যানারের ভেতরের ডিফল্ট বক্সের ওপর অ্যাভাটার বসানোর জন্য পজিশন (পিক্সেল অনুযায়ী)
+AVATAR_POS_X = 23       # ব্যানারের বর্ডার থেকে ডানে সরানোর জন্য
+AVATAR_POS_Y = 32       # ব্যানারের উপর থেকে নিচে নামানোর জন্য
+AVATAR_SIZE = 72        # ব্যানারের ভেতরের বক্সের সাথে মেলানোর সাইজ
 
-LEVEL_POS_X = 850       
-LEVEL_POS_Y = 320       
+# লেভেল টেক্সটের পজিশন (ডানদিকের Lvl. লেখার সাথে অ্যাডজাস্ট করা)
+LEVEL_POS_X = 930       
+LEVEL_POS_Y = 315       
+
+# নাম এবং গিল্ডের পজিশন (অ্যাভাটার বক্সের ঠিক ডান পাশে)
+NAME_POS_X = 110
+NAME_POS_Y = 32
+GUILD_POS_Y = 75
 
 # ================= Lifespan =================
 @asynccontextmanager
@@ -84,14 +90,12 @@ async def fetch_banner_bytes(banner_id):
     return None
 
 def load_banner_image(banner_bytes):
-    """ব্যানার ইমেজ লোড করার লজিক (না পাওয়া গেলে local banner_no.png ব্যবহার হবে)"""
     if banner_bytes:
         try:
             return Image.open(io.BytesIO(banner_bytes)).convert("RGBA")
         except:
             pass
     
-    # ব্যানার না পাওয়া গেলে বা এরর হলে local directory থেকে '901054015.png' রিড করবে
     local_default = os.path.join(os.path.dirname(__file__), "901054015.png")
     if os.path.exists(local_default):
         try:
@@ -99,8 +103,7 @@ def load_banner_image(banner_bytes):
         except:
             pass
             
-    # তাও যদি কোনো কারণে ফাইল মিসিং থাকে তবে ক্র্যাশ না করে একটি ডিফল্ট সাইজের ইমেজ জেনারেট করবে
-    return Image.new("RGBA", (1024, 400), (200, 200, 200, 255))
+    return Image.new("RGBA", (1024, 400), (30, 30, 30, 255))
 
 def bytes_to_image(img_bytes, default_size=(400, 400)):
     if img_bytes:
@@ -112,7 +115,7 @@ def bytes_to_image(img_bytes, default_size=(400, 400)):
     
 # ================= IMAGE PROCESS =================
 def process_banner_image(data, avatar_bytes, banner_bytes):
-    # ব্যানার লোড লজিক আপডেট করা হয়েছে
+    # গিটহাব বা লোকাল থেকে ব্যানার লোড (কোনো ক্রপিং ছাড়া অরিজিনাল সাইজ রাখা হচ্ছে)
     banner_img = load_banner_image(banner_bytes)
     avatar_img = bytes_to_image(avatar_bytes, default_size=(200, 200))
 
@@ -120,21 +123,21 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
     name = data.get("AccountName", "Unknown")
     guild = data.get("GuildName", "")
 
-    # ব্যানারের অরিজিনাল সাইজ যেন বজায় থাকে
+    # মেইন ক্যানভাস তৈরি
     combined = banner_img.copy()
     
-    # অ্যাভাটার রিসাইজ এবং প্লেসমেন্ট
+    # অ্যাভাটারটিকে নির্দিষ্ট ছোট বক্সে ওভারল্যাপ করার জন্য রিসাইজ ও পেস্ট
     avatar_img = avatar_img.resize((AVATAR_SIZE, AVATAR_SIZE), Image.LANCZOS)
     combined.paste(avatar_img, (AVATAR_POS_X, AVATAR_POS_Y), avatar_img)
 
     draw = ImageDraw.Draw(combined)
     
-    # ফন্ট সাইজ অ্যাডজাস্টমেন্ট
-    font_large = load_unicode_font(50)
-    font_large_cherokee = load_unicode_font(50, FONT_CHEROKEE)
-    font_small = load_unicode_font(35)
-    font_small_cherokee = load_unicode_font(35, FONT_CHEROKEE)
-    font_level = load_unicode_font(30)
+    # ব্যানারের অরিজিনাল ডাইমেনশন অনুযায়ী ফন্ট সাইজ ফিক্সড করা হয়েছে
+    font_large = load_unicode_font(32)
+    font_large_cherokee = load_unicode_font(32, FONT_CHEROKEE)
+    font_small = load_unicode_font(24)
+    font_small_cherokee = load_unicode_font(24, FONT_CHEROKEE)
+    font_level = load_unicode_font(40)  # Lvl. 1 লেখার সাথে ম্যাচিং সাইজ
 
     def is_cherokee(c):
         return 0x13A0 <= ord(c) <= 0x13FF or 0xAB70 <= ord(c) <= 0xABBF
@@ -149,15 +152,14 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
             draw.text((cx, y), ch, font=f, fill="white")
             cx += f.getlength(ch)
 
-    # নাম এবং গিল্ড এর টেক্সট লজিক
-    text_start_x = AVATAR_POS_X + AVATAR_SIZE + 30
-    draw_text(text_start_x, AVATAR_POS_Y + 10, name, font_large, font_large_cherokee, 3)
+    # নাম এবং গিল্ড টেক্সট ড্র করা
+    draw_text(NAME_POS_X, NAME_POS_Y, name, font_large, font_large_cherokee, 2)
     if guild:
-        draw_text(text_start_x, AVATAR_POS_Y + 75, guild, font_small, font_small_cherokee, 2)
+        draw_text(NAME_POS_X, GUILD_POS_Y, guild, font_small, font_small_cherokee, 2)
 
-    # লেভেল ডিসপ্লে
+    # লেভেল নাম্বারটি ব্যানারের "Lvl. " টেক্সটের ঠিক পাশে বসানো
     lvl_text = f"{level}"
-    draw_text(LEVEL_POS_X, LEVEL_POS_Y, lvl_text, font_level, font_level, 2)
+    draw.text((LEVEL_POS_X, LEVEL_POS_Y), lvl_text, font=font_level, fill="white", stroke_width=2, stroke_fill="black")
 
     img_io = io.BytesIO()
     combined.save(img_io, "PNG")
