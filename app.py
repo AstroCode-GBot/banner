@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 # GitHub Repository Settings
 GITHUB_BANNER_BASE = "https://raw.githubusercontent.com/AstroCode-GBot/kdhdsdf/main/banner/"
-DEFAULT_BANNER_FILENAME = "default.png"
+DEFAULT_BANNER_FILENAME = "901054015.png"
 
 # Avatar Positioning (Player avatar over template placeholder)
 TEMPLATE_AVATAR_X = 15
