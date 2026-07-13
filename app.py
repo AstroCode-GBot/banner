@@ -10,13 +10,9 @@ from PIL import Image, ImageDraw, ImageFont
 from concurrent.futures import ThreadPoolExecutor
 
 # ================= ADJUSTMENT SETTINGS =================
-AVATAR_ZOOM = 1.26
-AVATAR_SHIFT_Y = 0
-AVATAR_SHIFT_X = 0
-BANNER_START_X = 0.25
-BANNER_START_Y = 0.29
-BANNER_END_X = 0.81
-BANNER_END_Y = 0.65
+# ফাইনাল ইমেজ সাইজ এখন ফিক্সড ২০৪৮ x ৫১২
+TARGET_WIDTH = 2048
+TARGET_HEIGHT = 512
 
 # ================= Lifespan =================
 @asynccontextmanager
@@ -54,11 +50,11 @@ def load_unicode_font(size, font_file=FONT_FILE):
         font_path = os.path.join(os.path.dirname(__file__), font_file)
         if os.path.exists(font_path):
             return ImageFont.truetype(font_path, size)
-    except:
-        pass
+    except Exception as e:
+        print(f"[FONT ERROR] Could not load custom font {font_file}: {e}")
     return ImageFont.load_default()
 
-# Avatar বা অন্যান্য সাধারণ ইমেজের জন্য
+# Avatar Fetcher
 async def fetch_image_bytes(item_id):
     if not item_id or str(item_id) in ["0", "None", "null"]:
         return None
@@ -71,7 +67,7 @@ async def fetch_image_bytes(item_id):
         print(f"DEBUG: Error fetching image {item_id}: {e}")
     return None
 
-# ব্যানার ইমেজের জন্য নতুন ফাংশন (আপনার দেওয়া URL)
+# Banner Fetcher
 async def fetch_banner_bytes(banner_id):
     if not banner_id or str(banner_id) in ["0", "None", "null"]:
         return None
@@ -84,57 +80,47 @@ async def fetch_banner_bytes(banner_id):
         print(f"DEBUG: Error fetching banner {banner_id}: {e}")
     return None
 
-def bytes_to_image(img_bytes):
+def bytes_to_image(img_bytes, default_w=512, default_h=512):
     if img_bytes:
         try:
             return Image.open(io.BytesIO(img_bytes)).convert("RGBA")
         except:
             pass
-    return Image.new("RGBA", (400, 400), (200, 200, 200, 255))
+    return Image.new("RGBA", (default_w, default_h), (40, 40, 40, 255))
 
 # ================= IMAGE PROCESS =================
 def process_banner_image(data, avatar_bytes, banner_bytes):
-    avatar_img = bytes_to_image(avatar_bytes)
-    banner_img = bytes_to_image(banner_bytes)
+    # অবতার এবং ব্যানার ইমেজ লোড করা
+    avatar_img = bytes_to_image(avatar_bytes, default_w=TARGET_HEIGHT, default_h=TARGET_HEIGHT)
+    banner_img = bytes_to_image(banner_bytes, default_w=TARGET_WIDTH, default_h=TARGET_HEIGHT)
+    
     level = str(data.get("AccountLevel", "0"))
     name = data.get("AccountName", "Unknown")
     guild = data.get("GuildName", "")
-    TARGET_HEIGHT = 400
 
-    # Avatar Crop
-    zoom_size = int(TARGET_HEIGHT * AVATAR_ZOOM)
-    avatar_img = avatar_img.resize((zoom_size, zoom_size), Image.LANCZOS)
-    left = (zoom_size - TARGET_HEIGHT) // 2 - AVATAR_SHIFT_X
-    top = (zoom_size - TARGET_HEIGHT) // 2 - AVATAR_SHIFT_Y
-    avatar_img = avatar_img.crop((left, top, left + TARGET_HEIGHT, top + TARGET_HEIGHT))
-    av_w, av_h = avatar_img.size
+    # ১. অবতার সাইজ ফিক্সিং (ব্যানারের হাইট অনুযায়ী স্কয়ার সাইজ করা হলো)
+    avatar_img = avatar_img.resize((TARGET_HEIGHT, TARGET_HEIGHT), Image.LANCZOS)
+    av_w, _ = avatar_img.size
 
-    # Banner Crop Logic
-    b_w, b_h = banner_img.size
-    if b_w > 100 and b_h > 100:
-        banner_img = banner_img.rotate(3, expand=True)
-        bw_rot, bh_rot = banner_img.size
-        crop_left = bw_rot * BANNER_START_X
-        crop_top = bh_rot * BANNER_START_Y
-        crop_right = bw_rot * BANNER_END_X
-        crop_bottom = bh_rot * BANNER_END_Y
-        banner_img = banner_img.crop((crop_left, crop_top, crop_right, crop_bottom))
+    # ২. ব্যানার সাইজ ফিক্সিং (কোনো ক্রপ বা রোটেশন ছাড়া ফুল ২০৪৮ x ৫১২ সাইজে রিসাইজ)
+    banner_img = banner_img.resize((TARGET_WIDTH, TARGET_HEIGHT), Image.LANCZOS)
 
-    # Resize Banner
-    b_w, b_h = banner_img.size
-    aspect = (b_w / b_h) if b_h > 0 else 2.0
-    new_banner_w = int(TARGET_HEIGHT * aspect * 2)
-    banner_img = banner_img.resize((new_banner_w, TARGET_HEIGHT), Image.LANCZOS)
-    final_w = av_w + new_banner_w
-    combined = Image.new("RGBA", (final_w, TARGET_HEIGHT), (0, 0, 0, 255))
-    combined.paste(avatar_img, (0, 0))
-    combined.paste(banner_img, (av_w, 0))
+    # ৩. কম্বাইন্ড ক্যানভাস তৈরি (২০৪৮ x ৫১২ পিক্সেল)
+    combined = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), (0, 0, 0, 255))
+    
+    # প্রথমে পুরো ব্যাকগ্রাউন্ডে ব্যানার পেস্ট করা হলো
+    combined.paste(banner_img, (0, 0))
+    # ব্যানারের ওপর বাম কোণায় অবতারটি বসানো হলো
+    combined.paste(avatar_img, (0, 0), avatar_img)
+
     draw = ImageDraw.Draw(combined)
-    font_large = load_unicode_font(125)
-    font_large_cherokee = load_unicode_font(125, FONT_CHEROKEE)
-    font_small = load_unicode_font(95)
-    font_small_cherokee = load_unicode_font(95, FONT_CHEROKEE)
-    font_level = load_unicode_font(50)
+    
+    # ফন্ট সাইজ পিক্সেল রেশিও অনুযায়ী অ্যাডজাস্ট করা হয়েছে
+    font_large = load_unicode_font(140)
+    font_large_cherokee = load_unicode_font(140, FONT_CHEROKEE)
+    font_small = load_unicode_font(100)
+    font_small_cherokee = load_unicode_font(100, FONT_CHEROKEE)
+    font_level = load_unicode_font(70)
 
     def is_cherokee(c):
         return 0x13A0 <= ord(c) <= 0x13FF or 0xAB70 <= ord(c) <= 0xABBF
@@ -149,17 +135,19 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
             draw.text((cx, y), ch, font=f, fill="white")
             cx += f.getlength(ch)
 
-    # Draw Name and Guild
-    draw_text(av_w + 65, 40, name, font_large, font_large_cherokee, 4)
+    # লেখাগুলোর পজিশন অবতারের ডানে সেট করা হয়েছে
+    draw_text(av_w + 80, 50, name, font_large, font_large_cherokee, 5)
     if guild:
-        draw_text(av_w + 65, 220, guild, font_small, font_small_cherokee, 3)
+        draw_text(av_w + 80, 260, guild, font_small, font_small_cherokee, 4)
 
-    # Level Display
-    lvl_text = f"Lvl.{level}"
+    # লেভেল ডিসপ্লে (ডানদিকের নিচে ২য় ছবির মতো পজিশন)
+    lvl_text = f"Lvl. {level}"
     bbox = draw.textbbox((0, 0), lvl_text, font=font_level)
     w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.rectangle([final_w - w - 60, TARGET_HEIGHT - h - 50, final_w, TARGET_HEIGHT], fill="black")
-    draw.text((final_w - w - 30, TARGET_HEIGHT - h - 40), lvl_text, font=font_level, fill="white")
+    
+    # টেক্সটের চারপাশে ব্যাকগ্রাউন্ড বক্স
+    draw.rectangle([TARGET_WIDTH - w - 80, TARGET_HEIGHT - h - 60, TARGET_WIDTH - 30, TARGET_HEIGHT - 20], fill="black")
+    draw.text((TARGET_WIDTH - w - 55, TARGET_HEIGHT - h - 50), lvl_text, font=font_level, fill="white")
     
     img_io = io.BytesIO()
     combined.save(img_io, "PNG")
@@ -189,7 +177,6 @@ async def get_banner(uid: str):
     account_level = basic_info.get("level", "0")
     guild_name = clan_info.get("clanName", "")
 
-    # এখানে ব্যানারের জন্য নতুন fetch_banner_bytes ব্যবহার করা হয়েছে
     avatar_task = fetch_image_bytes(avatar_id)
     banner_task = fetch_banner_bytes(banner_id)
     avatar, banner = await asyncio.gather(avatar_task, banner_task)
