@@ -58,6 +58,7 @@ def load_unicode_font(size, font_file=FONT_FILE):
         pass
     return ImageFont.load_default()
 
+# Avatar বা অন্যান্য সাধারণ ইমেজের জন্য
 async def fetch_image_bytes(item_id):
     if not item_id or str(item_id) in ["0", "None", "null"]:
         return None
@@ -68,6 +69,19 @@ async def fetch_image_bytes(item_id):
             return resp.content
     except Exception as e:
         print(f"DEBUG: Error fetching image {item_id}: {e}")
+    return None
+
+# ব্যানার ইমেজের জন্য নতুন ফাংশন (আপনার দেওয়া URL)
+async def fetch_banner_bytes(banner_id):
+    if not banner_id or str(banner_id) in ["0", "None", "null"]:
+        return None
+    url = f"https://kdhdsdf.vercel.app/banner/{banner_id}.png"
+    try:
+        resp = await client.get(url)
+        if resp.status_code == 200:
+            return resp.content
+    except Exception as e:
+        print(f"DEBUG: Error fetching banner {banner_id}: {e}")
     return None
 
 def bytes_to_image(img_bytes):
@@ -175,8 +189,9 @@ async def get_banner(uid: str):
     account_level = basic_info.get("level", "0")
     guild_name = clan_info.get("clanName", "")
 
+    # এখানে ব্যানারের জন্য নতুন fetch_banner_bytes ব্যবহার করা হয়েছে
     avatar_task = fetch_image_bytes(avatar_id)
-    banner_task = fetch_image_bytes(banner_id)
+    banner_task = fetch_banner_bytes(banner_id)
     avatar, banner = await asyncio.gather(avatar_task, banner_task)
     
     banner_data = {
