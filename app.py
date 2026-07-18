@@ -31,8 +31,8 @@ app.add_middleware(
 )
 
 INFO_API_URL = "https://atozinfo.vercel.app/info?uid="
-# Updated Avatar API URL
-IMAGE_BASE_URL = "https://iconapi.wasmer.app/headpic"
+# Avatar API: https://iconapi.wasmer.app/{id}
+IMAGE_BASE_URL = "https://iconapi.wasmer.app"
 FONT_FILE = "arial_unicode_bold.otf"
 FONT_CHEROKEE = "NotoSansCherokee.ttf"
 
@@ -58,7 +58,7 @@ def load_unicode_font(size, font_file=FONT_FILE):
 async def fetch_image_bytes(item_id):
     if not item_id or str(item_id) in ["0", "None", "null"]:
         return None
-    url = f"{IMAGE_BASE_URL}/{item_id}.png"
+    url = f"{IMAGE_BASE_URL}/{item_id}"
     try:
         resp = await client.get(url)
         if resp.status_code == 200:
@@ -68,8 +68,13 @@ async def fetch_image_bytes(item_id):
     return None
 
 async def fetch_banner_bytes(banner_id):
+    default_path = os.path.join(os.path.dirname(__file__), "default.png")
     if not banner_id or str(banner_id) in ["0", "None", "null"]:
+        if os.path.exists(default_path):
+            with open(default_path, "rb") as f:
+                return f.read()
         return None
+        
     url = f"https://kdhdsdf.vercel.app/banner/{banner_id}.png"
     try:
         resp = await client.get(url)
@@ -77,52 +82,56 @@ async def fetch_banner_bytes(banner_id):
             return resp.content
     except Exception as e:
         print(f"DEBUG: Error fetching banner {banner_id}: {e}")
+    
+    if os.path.exists(default_path):
+        with open(default_path, "rb") as f:
+            return f.read()
     return None
 
-def bytes_to_image(img_bytes, default_w=512, default_h=512):
+def bytes_to_image(img_bytes, default_w=512, default_h=512, color=(0, 0, 0, 0)):
     if img_bytes:
         try:
             return Image.open(io.BytesIO(img_bytes)).convert("RGBA")
         except:
             pass
-    return Image.new("RGBA", (default_w, default_h), (255, 255, 255, 0))
+    return Image.new("RGBA", (default_w, default_h), color)
 
 # ================= IMAGE PROCESS =================
 def process_banner_image(data, avatar_bytes, banner_bytes):
-    # Load raw images
-    avatar_img = bytes_to_image(avatar_bytes, default_w=AVATAR_SIZE, default_h=AVATAR_SIZE)
-    banner_img = bytes_to_image(banner_bytes, default_w=BANNER_WIDTH, default_h=TARGET_HEIGHT)
+    # Load images
+    avatar_raw = bytes_to_image(avatar_bytes, AVATAR_SIZE, AVATAR_SIZE)
+    banner_raw = bytes_to_image(banner_bytes, BANNER_WIDTH, TARGET_HEIGHT, color=(30, 30, 30, 255))
     
     level = str(data.get("AccountLevel", "0"))
     name = data.get("AccountName", "Unknown")
     guild = data.get("GuildName", "")
 
-    # 1. Avatar: Crop from white border and Zoom to fill 512x512
-    bbox = avatar_img.getbbox()
+    # 1. Avatar: Crop to visible and Zoom
+    bbox = avatar_raw.getbbox()
     if bbox:
-        avatar_img = avatar_img.crop(bbox)
+        avatar_raw = avatar_raw.crop(bbox)
     
-    orig_av_w, orig_av_h = avatar_img.size
-    zoom_scale = max(AVATAR_SIZE / orig_av_w, AVATAR_SIZE / orig_av_h)
-    new_av_size = (int(orig_av_w * zoom_scale), int(orig_av_h * zoom_scale))
-    avatar_img = avatar_img.resize(new_av_size, Image.LANCZOS)
+    orig_av_w, orig_av_h = avatar_raw.size
+    scale_av = max(AVATAR_SIZE / orig_av_w, AVATAR_SIZE / orig_av_h)
+    new_av_size = (int(orig_av_w * scale_av), int(orig_av_h * scale_av))
+    avatar_resized = avatar_raw.resize(new_av_size, Image.LANCZOS)
     
-    left_av = (avatar_img.width - AVATAR_SIZE) // 2
-    top_av = (avatar_img.height - AVATAR_SIZE) // 2
-    avatar_final = avatar_img.crop((left_av, top_av, left_av + AVATAR_SIZE, top_av + AVATAR_SIZE))
+    left_av = (avatar_resized.width - AVATAR_SIZE) // 2
+    top_av = (avatar_resized.height - AVATAR_SIZE) // 2
+    avatar_final = avatar_resized.crop((left_av, top_av, left_av + AVATAR_SIZE, top_av + AVATAR_SIZE))
 
-    # 2. Banner: Resize and Crop to fill 1536x512
-    b_w, b_h = banner_img.size
+    # 2. Banner: Aspect Fill 1536x512
+    b_w, b_h = banner_raw.size
     scale_b = max(BANNER_WIDTH / b_w, TARGET_HEIGHT / b_h)
     new_b_size = (int(b_w * scale_b), int(b_h * scale_b))
-    banner_img = banner_img.resize(new_b_size, Image.LANCZOS)
+    banner_resized = banner_raw.resize(new_b_size, Image.LANCZOS)
     
-    left_b = (new_b_size[0] - BANNER_WIDTH) // 2
-    top_b = (new_b_size[1] - TARGET_HEIGHT) // 2
-    banner_final = banner_img.crop((left_b, top_b, left_b + BANNER_WIDTH, top_b + TARGET_HEIGHT))
+    left_b = (banner_resized.width - BANNER_WIDTH) // 2
+    top_b = (banner_resized.height - TARGET_HEIGHT) // 2
+    banner_final = banner_resized.crop((left_b, top_b, left_b + BANNER_WIDTH, top_b + TARGET_HEIGHT))
 
     # 3. Canvas Composition
-    combined = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), (0, 0, 0, 255))
+    combined = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), (20, 20, 20, 255))
     combined.paste(banner_final, (AVATAR_SIZE, 0))
     combined.paste(avatar_final, (0, 0), avatar_final)
 
@@ -133,7 +142,7 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
     font_large_cherokee = load_unicode_font(140, FONT_CHEROKEE)
     font_small = load_unicode_font(100)
     font_small_cherokee = load_unicode_font(100, FONT_CHEROKEE)
-    font_level = load_unicode_font(75)
+    font_level = load_unicode_font(115) # Increased size for better visibility
 
     def is_cherokee(c):
         return 0x13A0 <= ord(c) <= 0x13FF or 0xAB70 <= ord(c) <= 0xABBF
@@ -148,43 +157,40 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
             draw.text((cx, y), ch, font=f, fill="white")
             cx += f.getlength(ch)
 
-    # Text Placement
+    # Name and Guild
     text_margin = 80
     draw_text(AVATAR_SIZE + text_margin, 50, name, font_large, font_large_cherokee, 6)
     if guild:
         draw_text(AVATAR_SIZE + text_margin, 260, guild, font_small, font_small_cherokee, 5)
 
-    # 4. Level Section: Transparent Blur aligned to Right/Bottom edges
+    # 4. Level Section: Aesthetic Transparent Blur
     lvl_text = f"Lvl. {level}"
     bbox_lvl = draw.textbbox((0, 0), lvl_text, font=font_level)
     lw, lh = bbox_lvl[2] - bbox_lvl[0], bbox_lvl[3] - bbox_lvl[1]
     
-    # Calculate box dimensions to reach the edges
-    box_w = lw + 100
-    box_h = lh + 60
-    
-    # Coordinates aligned exactly to the right and bottom edges
+    # Box dimensions flush to bottom-right edge
+    box_w = lw + 140
+    box_h = lh + 100
     rect_x1 = TARGET_WIDTH - box_w
     rect_y1 = TARGET_HEIGHT - box_h
     rect_x2 = TARGET_WIDTH
     rect_y2 = TARGET_HEIGHT
 
-    # Blur the background area behind where the level will be
-    blur_box = (rect_x1, rect_y1, rect_x2, rect_y2)
-    blur_region = combined.crop(blur_box)
-    blur_region = blur_region.filter(ImageFilter.GaussianBlur(radius=20))
+    # Blur Crop
+    blur_region = combined.crop((rect_x1, rect_y1, rect_x2, rect_y2))
+    blur_region = blur_region.filter(ImageFilter.GaussianBlur(radius=35))
     combined.paste(blur_region, (rect_x1, rect_y1))
 
-    # Draw Level Text with stroke on top of blurred area (Red BG removed)
-    text_x = rect_x1 + (box_w - lw) // 2
-    text_y = rect_y1 + (box_h - lh) // 2 - 10
+    # Center level text in blurred region
+    tx = rect_x1 + (box_w - lw) // 2
+    ty = rect_y1 + (box_h - lh) // 2 - 15
     
-    # Draw text with heavy stroke for visibility on blur
-    stroke_val = 5
-    for dx in range(-stroke_val, stroke_val + 1):
-        for dy in range(-stroke_val, stroke_val + 1):
-            draw.text((text_x + dx, text_y + dy), lvl_text, font=font_level, fill="black")
-    draw.text((text_x, text_y), lvl_text, font=font_level, fill="white")
+    # Reduced stroke for aesthetic look
+    s_val = 3 
+    for dx in range(-s_val, s_val + 1):
+        for dy in range(-s_val, s_val + 1):
+            draw.text((tx + dx, ty + dy), lvl_text, font=font_level, fill="black")
+    draw.text((tx, ty), lvl_text, font=font_level, fill="white")
     
     img_io = io.BytesIO()
     combined.save(img_io, "PNG")
@@ -232,7 +238,11 @@ async def get_banner(uid: str):
         headers={"Cache-Control": "public, max-age=300"}
     )
 
+#if __name__ == "__main__":
+#    import uvicorn
+#    port = int(os.environ.get("PORT", 5000))
+#    uvicorn.run(app, host="0.0.0.0", port=port)
+
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 5000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="127.0.0.1", port=8080)
