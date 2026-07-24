@@ -183,7 +183,7 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
 
     # Center level text in blurred region
     tx = rect_x1 + (box_w - lw) // 2
-    ty = rect_y1 + (box_h - lh) // 2 - 15
+    ty = rect_y1 + (box_h - lh) // 2 - 10
     
     # Reduced stroke for aesthetic look
     s_val = 3 
