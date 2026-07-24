@@ -170,7 +170,7 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
     
     # Box dimensions flush to bottom-right edge
     box_w = lw + 30
-    box_h = lh + 20
+    box_h = lh + 30
     rect_x1 = TARGET_WIDTH - box_w
     rect_y1 = TARGET_HEIGHT - box_h
     rect_x2 = TARGET_WIDTH
