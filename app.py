@@ -166,7 +166,7 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
     # 4. Level Section: Aesthetic Transparent Blur
     lvl_text = f"Lvl. {level}"
     bbox_lvl = draw.textbbox((0, 0), lvl_text, font=font_level)
-    lw, lh = bbox_lvl[2] - bbox_lvl[0], bbox_lvl[3] - bbox_lvl[1]
+    lw, lh = bbox_lvl[2] - bbox_lvl[0], bbox_lvl[2] - bbox_lvl[1]
     
     # Box dimensions flush to bottom-right edge
     box_w = lw + 80
@@ -183,7 +183,7 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
 
     # Center level text in blurred region
     tx = rect_x1 + (box_w - lw) // 2
-    ty = rect_y1 + (box_h - lh) // 2 - 2
+    ty = rect_y1 + (box_h - lh) // 2 - 15
     
     # Reduced stroke for aesthetic look
     s_val = 3 
