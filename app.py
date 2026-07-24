@@ -178,7 +178,7 @@ def process_banner_image(data, avatar_bytes, banner_bytes):
 
     # Blur Crop
     blur_region = combined.crop((rect_x1, rect_y1, rect_x2, rect_y2))
-    blur_region = blur_region.filter(ImageFilter.GaussianBlur(radius=35))
+    blur_region = blur_region.filter(ImageFilter.GaussianBlur(radius=25))
     combined.paste(blur_region, (rect_x1, rect_y1))
 
     # Center level text in blurred region
